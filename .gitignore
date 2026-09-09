@@ -1,0 +1,17 @@
+node_modules/
+skills/
+sample-build/
+backup/
+venv/
+skills
+.agents
+.claude
+.next/
+out/
+.env
+.env.*
+!.env.example
+*.tsbuildinfo
+.artifacts/
+test-results/
+playwright-report/
