@@ -707,7 +707,7 @@ remains broken, deferred debt, runtime checks still needed, and commit
 grouping advice. A fix is not complete until the next agent or human knows
 exactly what remains and what was intentionally deferred.
 
-Now, meticulously plan to create a produce a production-ready and enterprise-grade chat application using the following sample code as reference.
+Now, meticulously plan to create a produce a polished, production-ready and enterprise-grade chat application using the following sample code as reference.
 
 ```
 from langchain_nvidia_ai_endpoints import ChatNVIDIA
