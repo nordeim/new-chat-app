@@ -32,7 +32,7 @@ Kimi Workspace solves a common problem: most chat starters stop at a single hard
 | Language | TypeScript (strict) | 5.9 | End-to-end typed contracts |
 | Styling | Tailwind CSS (CSS-first) | 4.1 | Mint design tokens in `globals.css` |
 | Validation | zod | 4.6 | Shared client/server schemas |
-| Data | Drizzle ORM + `pg` | 0.45 / 8.20 | Parameterized queries, JSONB message storage |
+| Data | Drizzle ORM + `pg` | 0.45 / 8.20 | Parameterized queries, JSONB message storage, versioned migrations in `drizzle/` |
 | Database | PostgreSQL | 14+ | Sessions, conversations |
 | AI | NVIDIA NIM (OpenAI-compatible) | — | `moonshotai/kimi-k3` streaming completions |
 | Testing | node:test · Playwright · axe | — | Unit, API-isolation, E2E + WCAG checks |
@@ -50,6 +50,7 @@ flowchart LR
 ### File hierarchy
 
 ```text
+📂 drizzle                        # versioned SQL migrations (generate → migrate)
 📂 src
 ├── 📂 app
 │   ├── 📂 api
@@ -62,7 +63,8 @@ flowchart LR
 │   └── 📄 chat-workspace.tsx       # The complete client workspace (single component)
 ├── 📂 db
 │   ├── 📄 index.ts                 # pg Pool + Drizzle instance
-│   └── 📄 schema.ts                # sessions & conversations tables
+│   ├── 📄 schema.ts                # sessions & conversations tables
+│   └── 📄 seed.ts                  # idempotent local-dev seed
 └── 📂 lib
     ├── 📄 server.ts                # Cookie session, origin guard, bounded body reader
     ├── 📄 validation.ts            # All zod schemas
@@ -86,15 +88,57 @@ Requirements: **Node.js ≥ 22** and a **PostgreSQL** database.
 2. Apply the schema and start:
 
    ```bash
-   npx drizzle-kit push
+   npm run db:migrate   # production-safe, journal-driven (or: npx drizzle-kit push for prototyping)
    npm run dev
    ```
+
+   Schema changes: edit `src/db/schema.ts`, then `npm run db:generate` to create `drizzle/*.sql` and commit the migration. Seed a fresh DB with `npm run db:seed` (idempotent, local-only).
 
 3. Verify setup:
 
    - `http://localhost:3000` shows the mint workspace with prompt starters.
    - `curl http://localhost:3000/api/health` returns `{"ok":true}`.
    - Without `NVIDIA_API_KEY`, sending a message shows the “Connect NVIDIA…” guidance and keeps your draft — by design.
+
+### Fresh Setup
+
+```bash 
+  # first clone / fresh volume 
+  npm ci 
+  cp .env.example .env   # DATABASE_URL="postgresql://chat_user:chat_secret@127.0.0.1:5433/chat_db" 
+  docker compose up -d 
+  npm run db:migrate     # or db:generate first if schema changed 
+  npm run db:seed        # optional, idempotent demo row 
+  npm run dev 
+  curl http://localhost:3000/api/health  # {"ok":true} 
+
+  # schema change 
+  # 1) edit src/db/schema.ts 
+  # 2) npm run db:generate   # commits drizzle/*.sql + drizzle/meta/ 
+  # 3) npm run db:migrate     # apply 
+  # 4) npm run build && npm test 
+```
+
+### Commands for Next Cycle 
+ 
+```bash 
+  # normal dev (idempotent, no data loss) 
+  sudo docker compose up -d 
+  DATABASE_URL="postgresql://chat_user:chat_secret@127.0.0.1:5433/chat_db" npm run db:migrate 
+  DATABASE_URL="..." npm run db:seed 
+  npm run typecheck && npm run lint && npm test && npm run build 
+  # restart background: 
+  bg_kill bt-1 2>&1 | head   # or kill <pid> 
+  bg_start --title "kimi-3002" --command 'DATABASE_URL="postgresql://chat_user:chat_secret@127.0.0.1:5433/chat_db" npx next start -p 3002' 
+ 
+  # schema change: 
+  # edit src/db/schema.ts → npm run db:generate → git add drizzle/ → npm run db:migrate 
+ 
+  # cold-start proof (destroys volume): 
+  # RESET=true sudo docker compose down -v && sudo docker compose up -d && npm run db:migrate && npm run db:seed 
+``` 
+ 
+Verification left green: typecheck → lint → test → build → health {"ok":true} → workspace 200. bg_list shows bt-1 running on 3002 with scandihaven intact.
 
 ### Environment Variables
 
@@ -153,6 +197,7 @@ Limits: 100 conversations per workspace, 60 persisted messages per conversation,
 
 ```bash
 npm test                                   # unit: schemas + SSE parser (node:test)
+npm run db:migrate                         # apply migrations (or db:generate first if schema changed)
 npm run build && npm start                 # required for E2E
 npm run test:e2e                           # Playwright: UI, API isolation, WCAG
 LIVE_SITE_URL=https://your-deployment.example npx playwright test tests/live-site.spec.ts
@@ -176,6 +221,7 @@ Latest verification (2026-09-10, audit pass 2): typecheck, lint, build, 5/5 unit
 | Live-deployment E2E | `tests/live-site.spec.ts` (env-gated via `LIVE_SITE_URL`) validates a deployed instance end to end |
 | CI | `.github/workflows/ci.yml` runs typecheck → lint → unit → build, plus E2E against a PostgreSQL service container |
 | HSTS | `Strict-Transport-Security: max-age=63072000; includeSubDomains` added app-side (enforced by TLS ingress) |
+| Database lifecycle | `drizzle.config.ts` reads `DATABASE_URL` (no hard-coded sandbox URL), `npm run db:generate` → `drizzle/*.sql`, `npm run db:migrate` (production-safe), `npm run db:seed` (idempotent local seed) |
 | Security remediation | Removed a committed SSH private key from `docs/`; secret patterns ignored. **The exposed key must still be rotated by the operator** — removal does not unpublish git history |
 
 ## Design system

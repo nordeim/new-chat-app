@@ -9,6 +9,9 @@
     "typecheck": "next typegen && tsc --noEmit",
     "test": "node --experimental-strip-types --test tests/*.test.mjs",
     "test:e2e": "playwright test",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate",
+    "db:seed": "node --experimental-strip-types scripts/seed.mjs",
     "prune": "node --experimental-strip-types scripts/prune-expired.mjs"
   },
   "dependencies": {

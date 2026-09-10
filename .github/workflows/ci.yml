@@ -48,7 +48,7 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: npx drizzle-kit push --force --dialect=postgresql --schema=./src/db/schema.ts --url="$DATABASE_URL"
+      - run: npm run db:migrate
       - run: npm run build
       - run: npx playwright install chromium --with-deps
       # TEST_BASE_URL stays unset so the Playwright config boots `npm start`.

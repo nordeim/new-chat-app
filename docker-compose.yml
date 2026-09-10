@@ -20,7 +20,7 @@ services:
       POSTGRES_PASSWORD: chat_secret
       PGDATA: /var/lib/postgresql/data/pgdata
     ports:
-      - "5433:5433"
+      - "5433:5432"
     volumes:
       - chat_data:/var/lib/postgresql/data
       - ./infrastructure/postgres/init:/docker-entrypoint-initdb.d

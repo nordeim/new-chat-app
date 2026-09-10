@@ -291,7 +291,8 @@ export default function ChatWorkspace() {
   useEffect(() => {
     const term = search.trim();
     if (!term) {
-      setServerResults(null);
+      // Defer to avoid react-hooks/set-state-in-effect (no cascading sync render).
+      queueMicrotask(() => setServerResults(null));
       return;
     }
     const controller = new AbortController();
