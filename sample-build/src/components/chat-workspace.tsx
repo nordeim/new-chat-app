@@ -9,8 +9,6 @@ import {
 } from "react";
 import Image from "next/image";
 import * as Dialog from "@radix-ui/react-dialog";
-import Markdown from "react-markdown";
-import remarkGfm from "remark-gfm";
 import { z } from "zod";
 import {
   ArrowUp,
@@ -40,9 +38,8 @@ import {
   ExternalLink,
   Loader2,
   Command,
-  ShieldCheck,
-  Zap,
-  Eye,
+    ShieldCheck,
+    Eye,
   MoreHorizontal,
 } from "lucide-react";
 import {
@@ -52,7 +49,13 @@ import {
   type ConversationSummary,
 } from "@/lib/types";
 import { SSEParser } from "@/lib/sse";
-import NavigationFrame from "@/components/navigation-frame";
+import {
+  formatRelativeTime,
+  groupConversationsByPeriod,
+} from "@/lib/history";
+import { workspaceLoadError } from "@/lib/workspace-error";
+import { MarkdownMessage } from "@/components/markdown-message";
+import { ImageLightbox } from "@/components/image-lightbox";
 
 const categories = [
   {
@@ -179,7 +182,12 @@ function Modal({
 }
 
 async function apiJson(response: Response): Promise<unknown> {
-  const data: unknown = await response.json();
+  let data: unknown;
+  try {
+    data = await response.json();
+  } catch {
+    data = undefined;
+  }
   if (!response.ok) {
     const error = z.object({ error: z.string() }).safeParse(data);
     throw new Error(
@@ -191,20 +199,28 @@ async function apiJson(response: Response): Promise<unknown> {
   return data;
 }
 
+// API payloads are untrusted at the client boundary: a proxy or degraded
+// server must never surface raw parse/schema errors to the workspace.
+function parseOrReload<T extends z.ZodTypeAny>(schema: T, data: unknown): z.infer<T> {
+  const result = schema.safeParse(data);
+  if (!result.success)
+    throw new Error("Could not load your workspace. Please reload.");
+  return result.data;
+}
+
 async function fetchWorkspace(): Promise<{
   conversations: ConversationSummary[];
   configured: boolean;
 }> {
-  return z
-    .object({
+  return parseOrReload(
+    z.object({
       conversations: z.array(summarySchema),
       configured: z.boolean(),
-    })
-    .parse(
-      await apiJson(
-        await fetch("/api/conversations", { cache: "no-store" }),
-      ),
-    );
+    }),
+    await apiJson(
+      await fetch("/api/conversations", { cache: "no-store" }),
+    ),
+  );
 }
 
 export default function ChatWorkspace() {
@@ -231,9 +247,13 @@ export default function ChatWorkspace() {
     "search" | "settings" | "help" | "model" | "rename" | "delete" | null
   >(null);
   const [search, setSearch] = useState("");
+  const [serverResults, setServerResults] = useState<
+    ConversationSummary[] | null
+  >(null);
   const [rename, setRename] = useState("");
   const [mutationBusy, setMutationBusy] = useState(false);
   const [copied, setCopied] = useState<string>();
+  const [lightbox, setLightbox] = useState<{ src: string; alt: string }>();
   const textarea = useRef<HTMLTextAreaElement>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const abortRef = useRef<AbortController>(null);
@@ -243,6 +263,11 @@ export default function ChatWorkspace() {
   const filteredHistory = history.filter((item) =>
     item.title.toLowerCase().includes(search.toLowerCase()),
   );
+  const searchTerm = search.trim();
+  const searchMatches = searchTerm
+    ? (serverResults ?? filteredHistory)
+    : filteredHistory;
+  const groupedHistory = groupConversationsByPeriod(history);
 
   // Loads (or reloads) the workspace. Returns a dispose function so effects can
   // ignore stale responses; state updates happen only in async callbacks.
@@ -255,13 +280,20 @@ export default function ChatWorkspace() {
         setConfigured(data.configured);
         setReady(true);
       })
-      .catch((err: unknown) => {
-        if (cancelled) return;
-        setError(
-          err instanceof Error
-            ? err.message
-            : "Could not load your workspace. Please reload.",
-        );
+      .catch(() => {
+        void fetch("/api/health", { cache: "no-store" })
+          .then(async (response) => {
+            try {
+              return (await response.json()) as { ok?: unknown };
+            } catch {
+              return null;
+            }
+          })
+          .catch(() => null)
+          .then((health) => {
+            if (cancelled) return;
+            setError(workspaceLoadError(health));
+          });
       });
     return () => {
       cancelled = true;
@@ -269,6 +301,40 @@ export default function ChatWorkspace() {
   }, []);
 
   useEffect(() => refresh(), [refresh]);
+
+  // Non-empty search terms query the server (titles + message content).
+  // While a request is in flight the previous result set stays visible; if a
+  // search request fails, the modal degrades to local title filtering rather
+  // than showing a dead end for a type-ahead picker.
+  useEffect(() => {
+    const term = search.trim();
+    if (!term) return;
+    const controller = new AbortController();
+    const timer = setTimeout(() => {
+      fetch(`/api/conversations?q=${encodeURIComponent(term)}`, {
+        cache: "no-store",
+        signal: controller.signal,
+      })
+        .then(async (response) =>
+          response.ok ? apiJson(response) : Promise.reject(response.status),
+        )
+        .then((data: unknown) => {
+          if (controller.signal.aborted) return;
+          const parsed = z
+            .object({ conversations: z.array(summarySchema) })
+            .safeParse(data);
+          if (parsed.success) setServerResults(parsed.data.conversations);
+        })
+        .catch(() => {
+          // Abort or network failure: keep local title results visible.
+        });
+    }, 250);
+    return () => {
+      controller.abort();
+      clearTimeout(timer);
+    };
+  }, [search]);
+
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "instant", block: "end" });
   }, [messages, thinking]);
@@ -316,7 +382,6 @@ export default function ChatWorkspace() {
   async function openConversation(id: string) {
     if (busy) return;
     const opening = ++openingRef.current;
-    setCurrentId(undefined);
     setLoadingChat(true);
     setMessages([]);
     setError("");
@@ -325,17 +390,16 @@ export default function ChatWorkspace() {
     setDraft("");
     setAttachment(undefined);
     try {
-      const data = z
-        .object({
+      const data = parseOrReload(
+        z.object({
           conversation: summarySchema.extend({
             messages: z.array(messageSchema),
           }),
-        })
-        .parse(
-          await apiJson(
-            await fetch(`/api/conversations/${id}`, { cache: "no-store" }),
-          ),
-        );
+        }),
+        await apiJson(
+          await fetch(`/api/conversations/${id}`, { cache: "no-store" }),
+        ),
+      );
       if (opening !== openingRef.current) return;
       setCurrentId(id);
       setMessages(data.conversation.messages);
@@ -577,12 +641,20 @@ export default function ChatWorkspace() {
 
   return (
     <div className={`app-shell ${sidebarCollapsed ? "sidebar-collapsed" : ""}`}>
-      <NavigationFrame open={mobileOpen} onOpenChange={setMobileOpen}>
+      <a className="skip-link" href="#message">
+        Skip to message composer
+      </a>
+      {mobileOpen && (
+        <button
+          className="mobile-scrim"
+          aria-label="Close navigation"
+          onClick={() => setMobileOpen(false)}
+        />
+      )}
       <aside
         className={`sidebar ${mobileOpen ? "mobile-open" : ""}`}
         aria-label="Workspace navigation"
       >
-        {mobileOpen && <Dialog.Title className="sr-only">Workspace navigation</Dialog.Title>}
         <div className="brand-row">
           <button className="brand" onClick={newChat} aria-label="Kimi home">
             <KimiMark />
@@ -601,11 +673,6 @@ export default function ChatWorkspace() {
           >
             <PanelLeftClose size={17} />
           </button>
-          {mobileOpen && (
-            <Dialog.Close className="icon-button" aria-label="Close navigation">
-              <X size={18} />
-            </Dialog.Close>
-          )}
         </div>
         <button className="new-chat" onClick={newChat} disabled={busy}>
           <Plus size={19} />
@@ -634,24 +701,26 @@ export default function ChatWorkspace() {
             <MoreHorizontal size={17} />
           </button>
         </div>
-        <nav className="conversation-list" aria-label="Saved conversations" tabIndex={0}>
+        <nav className="conversation-list" aria-label="Saved conversations">
           {history.length > 0 ? (
-            <>
-              <div className="history-period">Recent</div>
-              {history.map((item) => (
-                <button
-                  key={item.id}
-                  className={`conversation-item ${currentId === item.id ? "active" : ""}`}
-                  disabled={busy}
-                  onClick={() => void openConversation(item.id)}
-                  title={item.title}
-                >
-                  <MessageSquare size={16} />
-                  <span>{item.title}</span>
-                  {currentId === item.id && <span className="active-dot" />}
-                </button>
-              ))}
-            </>
+            groupedHistory.map((group) => (
+              <div key={group.label}>
+                <div className="history-period">{group.label}</div>
+                {group.items.map((item) => (
+                  <button
+                    key={item.id}
+                    className={`conversation-item ${currentId === item.id ? "active" : ""}`}
+                    disabled={busy}
+                    onClick={() => void openConversation(item.id)}
+                    title={`${item.title} · ${formatRelativeTime(item.updatedAt)}`}
+                  >
+                    <MessageSquare size={16} />
+                    <span>{item.title}</span>
+                    {currentId === item.id && <span className="active-dot" />}
+                  </button>
+                ))}
+              </div>
+            ))
           ) : (
             <div className="history-empty">
               <div className="history-empty-icon">
@@ -705,7 +774,6 @@ export default function ChatWorkspace() {
           <span className="tiny-dot" /> A little more possible.
         </div>
       </aside>
-      </NavigationFrame>
 
       <main className="main-panel">
         <header className="topbar">
@@ -715,7 +783,7 @@ export default function ChatWorkspace() {
               aria-label="Open navigation"
               onClick={() => {
                 setSidebarCollapsed(false);
-                setMobileOpen(window.matchMedia("(max-width: 700px)").matches);
+                setMobileOpen(true);
               }}
             >
               <Menu size={20} />
@@ -791,7 +859,6 @@ export default function ChatWorkspace() {
                 {categories.map((item) => (
                   <button
                     key={item.id}
-                    aria-pressed={category === item.id}
                     className={`starter-card ${category === item.id ? "selected" : ""}`}
                     onClick={() => {
                       setCategory(item.id);
@@ -844,38 +911,32 @@ export default function ChatWorkspace() {
                       {message.role === "assistant" && <span>K3</span>}
                     </div>
                     {message.image && (
-                      <Image
-                        unoptimized
-                        className="message-image"
-                        src={message.image}
-                        width={280}
-                        height={200}
-                        alt="Image attached to your message"
-                      />
+                      <button
+                        type="button"
+                        className="message-image-button"
+                        onClick={() =>
+                          setLightbox({
+                            src: message.image as string,
+                            alt: "Image attached to your message",
+                          })
+                        }
+                      >
+                        <Image
+                          unoptimized
+                          className="message-image"
+                          src={message.image}
+                          width={280}
+                          height={200}
+                          alt="Image attached to your message"
+                        />
+                      </button>
                     )}
                     {message.role === "assistant" ? (
                       message.content ? (
-                        <div className="markdown">
-                          <Markdown
-                            remarkPlugins={[remarkGfm]}
-                            components={{
-                              a: ({ children, href }) => (
-                                <a
-                                  href={href}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                >
-                                  {children}
-                                </a>
-                              ),
-                              img: ({ alt }) => (
-                                <span>[Image: {alt ?? "image"}]</span>
-                              ),
-                            }}
-                          >
-                            {message.content}
-                          </Markdown>
-                        </div>
+                        <MarkdownMessage
+                          content={message.content}
+                          streaming={busy && message.id === messages.at(-1)?.id}
+                        />
                       ) : (
                         <div className="thinking-indicator">
                           <span />
@@ -1146,13 +1207,17 @@ export default function ChatWorkspace() {
             aria-label="Search conversations"
             placeholder="Search your conversations…"
             value={search}
-            onChange={(event) => setSearch(event.target.value)}
+            onChange={(event) => {
+              const next = event.target.value;
+              setSearch(next);
+              if (!next.trim()) setServerResults(null);
+            }}
           />
           <kbd>ESC</kbd>
         </div>
         <div className="search-results">
-          {filteredHistory.length ? (
-            filteredHistory.map((item) => (
+          {searchMatches.length ? (
+            searchMatches.map((item) => (
               <button
                 key={item.id}
                 disabled={busy}
@@ -1494,6 +1559,16 @@ export default function ChatWorkspace() {
           </button>
         </div>
       </Modal>
+      {lightbox && (
+        <ImageLightbox
+          src={lightbox.src}
+          alt={lightbox.alt}
+          open
+          onOpenChange={(open) => {
+            if (!open) setLightbox(undefined);
+          }}
+        />
+      )}
       {toast && (
         <div className="toast" role="status">
           <Check size={16} />

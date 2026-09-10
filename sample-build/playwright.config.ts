@@ -5,7 +5,6 @@ import { defineConfig, devices } from "@playwright/test";
 // suite is hermetic: it mocks both API endpoints and runs anywhere.
 export default defineConfig({
   testDir: "./tests",
-  testMatch: "**/*.spec.ts",
   timeout: 60_000,
   fullyParallel: false,
   workers: 1,

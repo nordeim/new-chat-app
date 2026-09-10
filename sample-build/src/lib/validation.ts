@@ -7,6 +7,14 @@ export const imageSchema = z
     /^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/]+={0,2}$/,
     "Use a PNG, JPEG, or WebP image under 2 MB.",
   );
+export const settingsSchema = z
+  .object({
+    temperature: z.number().min(0).max(2),
+    maxTokens: z.number().int().min(256).max(16384),
+    reasoningEffort: z.enum(["low", "high", "max"]),
+  })
+  .strict();
+
 export const chatInputSchema = z
   .object({
     conversationId: z.uuid().optional(),
@@ -16,13 +24,7 @@ export const chatInputSchema = z
       .min(1, "Write a message first.")
       .max(16000, "Messages can contain up to 16,000 characters."),
     image: imageSchema.optional(),
-    settings: z
-      .object({
-        temperature: z.number().min(0).max(2),
-        maxTokens: z.number().int().min(256).max(16384),
-        reasoningEffort: z.enum(["low", "high", "max"]),
-      })
-      .strict(),
+    settings: settingsSchema,
   })
   .strict();
 

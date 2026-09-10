@@ -1,60 +1,27 @@
-const MAX_EVENT_CHARACTERS = 1_000_000;
-
-// SSE uses LF, CRLF, or CR. Frame limits must not depend on network chunk size.
+// An SSE event may span network reads, UTF-8 characters, and multiple data lines.
 export class SSEParser {
-  private fragments: string[] = [];
-  private lineLength = 0;
+  private buffer = "";
   private data: string[] = [];
-  private dataLength = 0;
-  private skipLF = false;
-
-  private append(fragment: string) {
-    this.lineLength += fragment.length;
-    if (this.lineLength > MAX_EVENT_CHARACTERS)
-      throw new Error("Stream event exceeds the size limit.");
-    if (fragment) this.fragments.push(fragment);
-  }
-
-  private consumeLine(events: string[]) {
-    const line = this.fragments.join("");
-    this.fragments = [];
-    this.lineLength = 0;
-    if (line === "") {
-      if (this.data.length) events.push(this.data.join("\n"));
-      this.data = [];
-      this.dataLength = 0;
-      return;
-    }
-    if (!line.startsWith("data:")) return;
-    const value = line.slice(line[5] === " " ? 6 : 5);
-    this.dataLength += value.length + (this.data.length ? 1 : 0);
-    if (this.dataLength > MAX_EVENT_CHARACTERS)
-      throw new Error("Stream event exceeds the size limit.");
-    this.data.push(value);
-  }
-
   push(chunk: string): string[] {
+    this.buffer += chunk;
+    if (this.buffer.length > 1_000_000)
+      throw new Error("Stream event exceeds the size limit.");
     const events: string[] = [];
-    let start = 0;
-    for (let index = 0; index < chunk.length; index++) {
-      const character = chunk[index];
-      if (this.skipLF) {
-        this.skipLF = false;
-        if (character === "\n") {
-          start = index + 1;
-          continue;
-        }
+    let newline: number;
+    while ((newline = this.buffer.indexOf("\n")) !== -1) {
+      const line = this.buffer.slice(0, newline).replace(/\r$/, "");
+      this.buffer = this.buffer.slice(newline + 1);
+      if (line === "") {
+        if (this.data.length) events.push(this.data.join("\n"));
+        this.data = [];
+      } else if (line.startsWith("data:")) {
+        this.data.push(line.slice(5).replace(/^ /, ""));
+        if (this.data.reduce((sum, value) => sum + value.length, 0) > 1_000_000)
+          throw new Error("Stream event exceeds the size limit.");
       }
-      if (character !== "\r" && character !== "\n") continue;
-      this.append(chunk.slice(start, index));
-      this.consumeLine(events);
-      this.skipLF = character === "\r";
-      start = index + 1;
     }
-    this.append(chunk.slice(start));
     return events;
   }
-
   finish(): string[] {
     return this.push("\n\n");
   }

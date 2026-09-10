@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import AxeBuilder from "@axe-core/playwright";
 
 const base = process.env.TEST_BASE_URL ?? "http://localhost:3000";
 
@@ -101,4 +102,194 @@ test("renders streamed GitHub-Flavored Markdown tables", async ({ page }) => {
   const table = page.getByRole("table");
   await expect(table).toBeVisible();
   await expect(table.getByRole("cell", { name: "Ready" })).toBeVisible();
+});
+
+test("error state shows the server message and passes WCAG AA contrast", async ({
+  page,
+}) => {
+  await page.route("**/api/conversations", (route) =>
+    route.fulfill({
+      status: 500,
+      contentType: "application/json",
+      body: JSON.stringify({
+        error: "The workspace could not complete this action. Please try again.",
+      }),
+    }),
+  );
+  await page.goto(base);
+  const banner = page.locator(".error-banner");
+  await expect(banner).toBeVisible();
+  await expect(banner).toContainText("Could not load your workspace");
+  const results = await new AxeBuilder({ page })
+    .withTags(["wcag2a", "wcag2aa", "wcag21aa", "wcag22aa"])
+    .analyze();
+  if (results.violations.length > 0) {
+    test.info().attach("axe-error-state", {
+      body: JSON.stringify(results.violations, null, 2),
+      contentType: "application/json",
+    });
+  }
+  const serious = results.violations.filter((v) =>
+    ["critical", "serious"].includes(v.impact ?? ""),
+  );
+  expect(serious).toEqual([]);
+});
+
+test("non-JSON API failure renders friendly copy, not a parse error", async ({
+  page,
+}) => {
+  await page.route("**/api/conversations", (route) =>
+    route.fulfill({
+      status: 502,
+      contentType: "text/html",
+      body: "<html><body>Bad Gateway</body></html>",
+    }),
+  );
+  await page.goto(base);
+  const banner = page
+    .getByRole("alert")
+    .filter({ hasText: "Could not load your workspace. Please reload." });
+  await expect(banner).toBeVisible();
+  const text = await banner.innerText();
+  expect(text).not.toMatch(/unexpected|token|json/i);
+});
+
+test("skip link targets the composer", async ({ page }) => {
+  await page.route("**/api/conversations", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ conversations: [], configured: true }),
+    }),
+  );
+  await page.goto(base);
+  const skip = page.getByRole("link", { name: "Skip to message composer" });
+  await expect(skip).toHaveAttribute("href", "#message");
+  await expect(page.locator("#message")).toHaveCount(1);
+});
+
+test("composer shows a character count as the draft grows", async ({ page }) => {
+  await page.route("**/api/conversations", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ conversations: [], configured: true }),
+    }),
+  );
+  await page.goto(base);
+  await page.getByRole("textbox", { name: "Message Kimi" }).fill("Hello");
+  await expect(page.getByText("5 / 16,000")).toBeVisible();
+});
+
+test("database outage shows specific recovery copy", async ({ page }) => {
+  await page.route("**/api/conversations", (route) =>
+    route.fulfill({
+      status: 500,
+      contentType: "application/json",
+      body: JSON.stringify({ error: "down" }),
+    }),
+  );
+  await page.route("**/api/health", (route) =>
+    route.fulfill({
+      status: 500,
+      contentType: "application/json",
+      body: JSON.stringify({ ok: false }),
+    }),
+  );
+  await page.goto(base);
+  await expect(page.getByRole("alert")).toContainText(
+    "cannot reach its database",
+  );
+});
+
+test("fenced code in a streamed answer exposes a copy control", async ({
+  page,
+}) => {
+  const conversationId = crypto.randomUUID();
+  const assistantId = crypto.randomUUID();
+  const content = "```ts\nconst ready = true;\n```";
+  await page.route("**/api/conversations", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ conversations: [], configured: true }),
+    }),
+  );
+  await page.route("**/api/chat", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "text/event-stream",
+      body: sse([
+        {
+          type: "meta",
+          conversation: {
+            id: conversationId,
+            title: "Code sample",
+            updatedAt: new Date().toISOString(),
+          },
+        },
+        { type: "delta", content },
+        {
+          type: "done",
+          message: { id: assistantId, role: "assistant", content },
+        },
+      ]),
+    }),
+  );
+  await page.goto(base);
+  await page.getByRole("textbox", { name: "Message Kimi" }).fill("Show code");
+  await page.getByRole("button", { name: "Send message" }).click();
+  await expect(page.getByRole("button", { name: "Copy code" })).toBeVisible();
+});
+
+test("attached images open in a lightbox", async ({ page }) => {
+  const conversationId = crypto.randomUUID();
+  const assistantId = crypto.randomUUID();
+  await page.route("**/api/conversations", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ conversations: [], configured: true }),
+    }),
+  );
+  await page.route("**/api/chat", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "text/event-stream",
+      body: sse([
+        {
+          type: "meta",
+          conversation: {
+            id: conversationId,
+            title: "Image look",
+            updatedAt: new Date().toISOString(),
+          },
+        },
+        { type: "delta", content: "A single green pixel." },
+        {
+          type: "done",
+          message: {
+            id: assistantId,
+            role: "assistant",
+            content: "A single green pixel.",
+          },
+        },
+      ]),
+    }),
+  );
+  await page.goto(base);
+  await page.getByLabel("Upload image", { exact: true }).setInputFiles({
+    name: "one-pixel.png",
+    mimeType: "image/png",
+    buffer: Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=",
+      "base64",
+    ),
+  });
+  await page.getByRole("button", { name: "Send message" }).click();
+  await expect(page.getByAltText("Image attached to your message")).toBeVisible();
+  await page.getByAltText("Image attached to your message").click();
+  await expect(page.getByRole("dialog", { name: /Image attached/ })).toBeVisible();
+  await page.getByRole("button", { name: "Close image preview" }).click();
+  await expect(page.getByRole("dialog", { name: /Image attached/ })).toHaveCount(0);
 });

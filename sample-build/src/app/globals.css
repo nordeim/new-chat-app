@@ -992,13 +992,33 @@ kbd {
 .markdown li {
   margin-bottom: 5px;
 }
+.code-block {
+  position: relative;
+  margin: 16px 0;
+}
+.code-copy {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid #d5e0c8;
+  background: #f7faf3;
+  color: #4d6442;
+  border-radius: 6px;
+  padding: 4px 8px;
+  font-size: 10px;
+  font-weight: 600;
+}
 .markdown pre {
   background: #f1f4ed;
   border: 1px solid #e0e7d8;
   padding: 17px;
   border-radius: 9px;
   overflow-x: auto;
-  margin: 16px 0;
+  margin: 0;
   font-size: 12px;
   line-height: 1.7;
 }
@@ -1079,6 +1099,18 @@ kbd {
   margin: 5px 0 15px;
   border: 1px solid var(--line);
 }
+.message-image-button {
+  display: block;
+  padding: 0;
+  text-align: left;
+  border-radius: 10px;
+}
+.message-image-button:hover .message-image {
+  box-shadow: 0 0 0 2px #c5d6b8;
+}
+.message-image-button .message-image {
+  display: block;
+}
 .thinking-indicator {
   display: flex;
   align-items: center;
@@ -1136,7 +1168,7 @@ kbd {
   padding: 12px;
   font-size: 11px;
   line-height: 1.7;
-  color: #887349;
+  color: #6f5c30;
   margin-bottom: 12px;
 }
 .error-banner > svg {
@@ -1148,7 +1180,7 @@ kbd {
 .error-banner .icon-button {
   height: 22px;
   width: 22px;
-  color: #a28c61;
+  color: #7d673a;
 }
 .error-banner > div > button {
   display: flex;
@@ -2343,6 +2375,107 @@ kbd {
   .topbar {
     height: 65px;
   }
+}
+.skip-link {
+  position: absolute;
+  left: 12px;
+  top: -48px;
+  z-index: 100;
+  background: var(--green);
+  color: #fff;
+  padding: 8px 12px;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 600;
+}
+.skip-link:focus {
+  top: 12px;
+}
+.char-count {
+  font-size: 9px;
+  color: #8a9483;
+  letter-spacing: 0.2px;
+}
+.char-count.near-limit {
+  color: #8a5a32;
+  font-weight: 600;
+}
+.lightbox-overlay {
+  position: fixed;
+  inset: 0;
+  background: #1c2718e6;
+  z-index: 90;
+}
+.lightbox-content {
+  position: fixed;
+  inset: 0;
+  z-index: 91;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 48px 24px;
+  border: 0;
+  background: transparent;
+}
+.lightbox-image {
+  width: auto;
+  height: auto;
+  max-width: min(100%, 1100px);
+  max-height: 86dvh;
+  object-fit: contain;
+  border-radius: 12px;
+  box-shadow: 0 24px 80px #00000055;
+}
+.lightbox-close {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  width: 36px;
+  height: 36px;
+  background: #f4f7f0;
+  color: var(--ink);
+}
+.hljs-comment,
+.hljs-quote {
+  color: #6d7a64;
+  font-style: italic;
+}
+.hljs-keyword,
+.hljs-selector-tag,
+.hljs-addition {
+  color: #2f5d3c;
+  font-weight: 600;
+}
+.hljs-number,
+.hljs-string,
+.hljs-meta .hljs-string,
+.hljs-literal,
+.hljs-doctag,
+.hljs-regexp {
+  color: #3d6b4a;
+}
+.hljs-title,
+.hljs-section,
+.hljs-name,
+.hljs-selector-id,
+.hljs-selector-class {
+  color: #244d36;
+}
+.hljs-attribute,
+.hljs-attr,
+.hljs-variable,
+.hljs-template-variable,
+.hljs-class .hljs-title,
+.hljs-type {
+  color: #4a6740;
+}
+.hljs-symbol,
+.hljs-bullet,
+.hljs-built_in,
+.hljs-builtin-name,
+.hljs-link,
+.hljs-params {
+  color: #3e5a48;
 }
 @media (prefers-reduced-motion: reduce) {
   *,

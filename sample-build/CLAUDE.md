@@ -27,6 +27,7 @@ Stack: Next.js 16 App Router · React 19 · TypeScript (strict) · Tailwind v4 (
 - **No silent failure** — user-facing error copy is specific and actionable; structured JSON logs carry operation/id/error-type, never message content or secrets.
 - **Streaming integrity** — only complete provider answers are persisted; partial/failed streams surface explicit errors and stay retryable.
 - **Session isolation** — every conversation query filters by `owner`; writes require a same-origin `Origin` header.
+- **Curated failure surfaces** — initial-load failures always show the reload guidance; streamed/API error copy comes from the server contract. Raw parse, network, or schema errors never reach the banner.
 
 ## Implementation Standards
 
@@ -37,6 +38,7 @@ Stack: Next.js 16 App Router · React 19 · TypeScript (strict) · Tailwind v4 (
 - No `any` — use `unknown` plus narrowing. No `@ts-ignore`. No disabled rules/tests.
 - Validate all external input with zod at the boundary (`src/lib/validation.ts` is the single home for schemas).
 - One responsibility per module; parse provider data as typed structures, dispatch on explicit `type` fields.
+- Client-side API payloads are untrusted: validate every API response with zod through the shared `apiJson`/`parseOrReload` helpers so degraded servers/proxies cannot leak raw errors into the UI.
 
 ### Language & Framework Guidelines
 
@@ -84,8 +86,9 @@ npm run dev                           # http://localhost:3000
 ### Test Pyramid
 
 - **Unit** (`tests/core.test.mjs`): zod schemas, SSE parser edge cases — fast, no services.
-- **API/integration** (`tests/workspace.spec.ts`): session isolation, ownership, origin enforcement, cookie flags — Playwright request context + Drizzle fixtures.
-- **E2E/UI** (`tests/workspace.spec.ts`, `tests/stream-ui.spec.ts`): user journeys, WCAG AA via axe, streamed-answer rendering through a transport fixture (no live provider needed).
+- **API/integration** (`tests/workspace.spec.ts`): session isolation, ownership, origin enforcement, cookie flags, `?q=` search, retention pruning — Playwright request context + Drizzle fixtures.
+- **E2E/UI** (`tests/workspace.spec.ts`, `tests/stream-ui.spec.ts`): user journeys, WCAG AA via axe (welcome, dialogs, **and the error state**), streamed-answer rendering through a transport fixture (no live provider needed).
+- **Live deployment** (`tests/live-site.spec.ts`): env-gated via `LIVE_SITE_URL`; validates a real deployment (headers, API contract, session isolation, optional single provider round-trip).
 
 ### Test Commands
 
@@ -93,13 +96,13 @@ npm run dev                           # http://localhost:3000
 npm test                       # unit
 npm run test:e2e               # Playwright (start the production preview first)
 npx playwright test tests/stream-ui.spec.ts   # single suite
+LIVE_SITE_URL=https://host npx playwright test tests/live-site.spec.ts  # live deployment
+npm run prune -- --idle-days 30                # retention (ops)
 ```
 
 E2E prerequisites: `npm run build && npm start`, disposable `DATABASE_URL` (fixtures are inserted/deleted), **no** `NVIDIA_API_KEY` (missing-key UX is part of the spec), `TEST_BASE_URL` for non-default origins.
 
-Audit history: `docs/CODE_REVIEW_REPORT.md` is upstream historical evidence. Current findings, regression evidence, and unresolved live-deployment issues are recorded in `docs/ENHANCEMENT_REVIEW.md`.
-
-Enhancements: the shared SSE parser supports CR/LF/CRLF with network-independent event limits. Mobile navigation uses `navigation-frame.tsx` and Radix focus containment; an accessible close control must remain inside the drawer. `workspace-polish.css` owns scoped readability and error-contrast improvements. Browser tests use `*.spec.ts`; unit tests use `*.test.mjs`. Only `tests/live-readonly.spec.ts` may run against the live website; fixtures and destructive tests require a disposable local database.
+Audit history: the severity-ranked review at `docs/CODE_REVIEW_REPORT.md` records what was checked, what was fixed, and open backlog items — read it before planning changes.
 
 ## Code Quality Standards
 
@@ -136,7 +139,7 @@ Request path: browser → `/api/chat` → origin + session + lease → conversat
 | Endpoint | Method | Notes |
 |----------|--------|-------|
 | `/api/chat` | POST | SSE stream; origin-checked; session lease (429 on conflict) |
-| `/api/conversations` | GET | Sets session cookie; returns list + `configured` flag |
+| `/api/conversations` | GET | Sets session cookie; returns list + `configured` flag; optional `?q=` server-side search over titles and message content |
 | `/api/conversations/[id]` | GET/PATCH/DELETE | Ownership enforced; rename validates 1–100 chars; delete is transactional and refuses while a response is running |
 | `/api/health` | GET | DB connectivity only; does not validate the provider key |
 
@@ -152,6 +155,7 @@ Request path: browser → `/api/chat` → origin + session + lease → conversat
 | `DATABASE_URL` | PostgreSQL connection string | Required; app throws without it |
 | `NVIDIA_API_KEY` | Provider key (server-only) | Optional locally; missing key → 503 with guidance |
 | `TEST_BASE_URL` | Playwright target origin | Optional; default `http://localhost:3000` |
+| `LIVE_SITE_URL` | Live-deployment E2E target | Optional; suite skips when unset |
 
 ## Anti-Patterns to Avoid
 
