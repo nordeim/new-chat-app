@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import AxeBuilder from "@axe-core/playwright";
 
 const base = process.env.TEST_BASE_URL ?? "http://localhost:3000";
 
@@ -101,4 +102,54 @@ test("renders streamed GitHub-Flavored Markdown tables", async ({ page }) => {
   const table = page.getByRole("table");
   await expect(table).toBeVisible();
   await expect(table.getByRole("cell", { name: "Ready" })).toBeVisible();
+});
+
+test("error state shows the server message and passes WCAG AA contrast", async ({
+  page,
+}) => {
+  await page.route("**/api/conversations", (route) =>
+    route.fulfill({
+      status: 500,
+      contentType: "application/json",
+      body: JSON.stringify({
+        error: "The workspace could not complete this action. Please try again.",
+      }),
+    }),
+  );
+  await page.goto(base);
+  const banner = page.locator(".error-banner");
+  await expect(banner).toBeVisible();
+  await expect(banner).toContainText("Could not load your workspace");
+  const results = await new AxeBuilder({ page })
+    .withTags(["wcag2a", "wcag2aa", "wcag21aa", "wcag22aa"])
+    .analyze();
+  if (results.violations.length > 0) {
+    test.info().attach("axe-error-state", {
+      body: JSON.stringify(results.violations, null, 2),
+      contentType: "application/json",
+    });
+  }
+  const serious = results.violations.filter((v) =>
+    ["critical", "serious"].includes(v.impact ?? ""),
+  );
+  expect(serious).toEqual([]);
+});
+
+test("non-JSON API failure renders friendly copy, not a parse error", async ({
+  page,
+}) => {
+  await page.route("**/api/conversations", (route) =>
+    route.fulfill({
+      status: 502,
+      contentType: "text/html",
+      body: "<html><body>Bad Gateway</body></html>",
+    }),
+  );
+  await page.goto(base);
+  const banner = page
+    .getByRole("alert")
+    .filter({ hasText: "Could not load your workspace. Please reload." });
+  await expect(banner).toBeVisible();
+  const text = await banner.innerText();
+  expect(text).not.toMatch(/unexpected|token|json/i);
 });

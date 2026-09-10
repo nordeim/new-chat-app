@@ -178,7 +178,12 @@ function Modal({
 }
 
 async function apiJson(response: Response): Promise<unknown> {
-  const data: unknown = await response.json();
+  let data: unknown;
+  try {
+    data = await response.json();
+  } catch {
+    data = undefined;
+  }
   if (!response.ok) {
     const error = z.object({ error: z.string() }).safeParse(data);
     throw new Error(
@@ -190,20 +195,28 @@ async function apiJson(response: Response): Promise<unknown> {
   return data;
 }
 
+// API payloads are untrusted at the client boundary: a proxy or degraded
+// server must never surface raw parse/schema errors to the workspace.
+function parseOrReload<T extends z.ZodTypeAny>(schema: T, data: unknown): z.infer<T> {
+  const result = schema.safeParse(data);
+  if (!result.success)
+    throw new Error("Could not load your workspace. Please reload.");
+  return result.data;
+}
+
 async function fetchWorkspace(): Promise<{
   conversations: ConversationSummary[];
   configured: boolean;
 }> {
-  return z
-    .object({
+  return parseOrReload(
+    z.object({
       conversations: z.array(summarySchema),
       configured: z.boolean(),
-    })
-    .parse(
-      await apiJson(
-        await fetch("/api/conversations", { cache: "no-store" }),
-      ),
-    );
+    }),
+    await apiJson(
+      await fetch("/api/conversations", { cache: "no-store" }),
+    ),
+  );
 }
 
 export default function ChatWorkspace() {
@@ -230,6 +243,9 @@ export default function ChatWorkspace() {
     "search" | "settings" | "help" | "model" | "rename" | "delete" | null
   >(null);
   const [search, setSearch] = useState("");
+  const [serverResults, setServerResults] = useState<
+    ConversationSummary[] | null
+  >(null);
   const [rename, setRename] = useState("");
   const [mutationBusy, setMutationBusy] = useState(false);
   const [copied, setCopied] = useState<string>();
@@ -242,6 +258,7 @@ export default function ChatWorkspace() {
   const filteredHistory = history.filter((item) =>
     item.title.toLowerCase().includes(search.toLowerCase()),
   );
+  const searchMatches = serverResults ?? filteredHistory;
 
   // Loads (or reloads) the workspace. Returns a dispose function so effects can
   // ignore stale responses; state updates happen only in async callbacks.
@@ -254,13 +271,11 @@ export default function ChatWorkspace() {
         setConfigured(data.configured);
         setReady(true);
       })
-      .catch((err: unknown) => {
+      .catch(() => {
         if (cancelled) return;
-        setError(
-          err instanceof Error
-            ? err.message
-            : "Could not load your workspace. Please reload.",
-        );
+        // Initial-load failures are never actionable beyond a reload, so the
+        // curated copy replaces raw network/server error text here.
+        setError("Could not load your workspace. Please reload.");
       });
     return () => {
       cancelled = true;
@@ -268,6 +283,43 @@ export default function ChatWorkspace() {
   }, []);
 
   useEffect(() => refresh(), [refresh]);
+
+  // Non-empty search terms query the server (titles + message content).
+  // While a request is in flight the previous result set stays visible; if a
+  // search request fails, the modal degrades to local title filtering rather
+  // than showing a dead end for a type-ahead picker.
+  useEffect(() => {
+    const term = search.trim();
+    if (!term) {
+      setServerResults(null);
+      return;
+    }
+    const controller = new AbortController();
+    const timer = setTimeout(() => {
+      fetch(`/api/conversations?q=${encodeURIComponent(term)}`, {
+        cache: "no-store",
+        signal: controller.signal,
+      })
+        .then(async (response) =>
+          response.ok ? apiJson(response) : Promise.reject(response.status),
+        )
+        .then((data: unknown) => {
+          if (controller.signal.aborted) return;
+          const parsed = z
+            .object({ conversations: z.array(summarySchema) })
+            .safeParse(data);
+          if (parsed.success) setServerResults(parsed.data.conversations);
+        })
+        .catch(() => {
+          // Abort or network failure: keep local title results visible.
+        });
+    }, 250);
+    return () => {
+      controller.abort();
+      clearTimeout(timer);
+    };
+  }, [search]);
+
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "instant", block: "end" });
   }, [messages, thinking]);
@@ -323,17 +375,16 @@ export default function ChatWorkspace() {
     setDraft("");
     setAttachment(undefined);
     try {
-      const data = z
-        .object({
+      const data = parseOrReload(
+        z.object({
           conversation: summarySchema.extend({
             messages: z.array(messageSchema),
           }),
-        })
-        .parse(
-          await apiJson(
-            await fetch(`/api/conversations/${id}`, { cache: "no-store" }),
-          ),
-        );
+        }),
+        await apiJson(
+          await fetch(`/api/conversations/${id}`, { cache: "no-store" }),
+        ),
+      );
       if (opening !== openingRef.current) return;
       setCurrentId(id);
       setMessages(data.conversation.messages);
@@ -1147,8 +1198,8 @@ export default function ChatWorkspace() {
           <kbd>ESC</kbd>
         </div>
         <div className="search-results">
-          {filteredHistory.length ? (
-            filteredHistory.map((item) => (
+          {searchMatches.length ? (
+            searchMatches.map((item) => (
               <button
                 key={item.id}
                 disabled={busy}

@@ -1136,7 +1136,7 @@ kbd {
   padding: 12px;
   font-size: 11px;
   line-height: 1.7;
-  color: #887349;
+  color: #6f5c30;
   margin-bottom: 12px;
 }
 .error-banner > svg {
@@ -1148,7 +1148,7 @@ kbd {
 .error-banner .icon-button {
   height: 22px;
   width: 22px;
-  color: #a28c61;
+  color: #7d673a;
 }
 .error-banner > div > button {
   display: flex;
