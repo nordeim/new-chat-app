@@ -65,8 +65,14 @@ Stack: Next.js 16 App Router · React 19 · TypeScript (strict) · Tailwind v4 (
 ```bash
 npm ci                                # Node.js >= 22
 cp .env.example .env                  # set DATABASE_URL (NVIDIA_API_KEY optional for UI tests)
-npx drizzle-kit push                  # apply schema to the dev database
+# Local Postgres (Docker) — once per cold-start:
+docker compose up -d                  # postgres:17 on 127.0.0.1:5433 (healthy in ~10s)
+npm run db:setup                      # migrate + seed in one (curated JSON; idempotent — 1/1 fresh → 0/0 warm)
+# Or step-by-step: npm run db:migrate (logs hash/sessions) + npm run db:seed (logs inserted/reason)
+curl http://localhost:3000/api/health # {"ok":true} — DB reachable
 npm run dev                           # http://localhost:3000
+# Schema change: edit src/db/schema.ts → npm run db:generate → commit drizzle/*.sql + drizzle/meta/
+# Cold-start reset: docker compose down -v && docker compose up -d && npm run db:setup
 ```
 
 ### Build Commands
@@ -80,6 +86,49 @@ npm run dev                           # http://localhost:3000
 | `npm run lint` | ESLint (flat config, next core-web-vitals) |
 | `npm test` | Unit tests (node:test + strip-types) |
 | `npm run test:e2e` | Playwright suite (needs built app + test database) |
+| `npm run db:generate` | Generate SQL migration from `src/db/schema.ts` → `drizzle/*.sql` + `drizzle/meta` (commit both) |
+| `npm run db:migrate` | Apply migrations (journal-driven, idempotent; logs `hash/sessions`; `[✓]` appears for both fresh and no-op — check logged hash) |
+| `npm run db:seed` | Seed demo workspace on fresh DB (`{inserted:1, reason:"seeded demo workspace"}` → `{inserted:0, reason:"already seeded"}` on re-run) |
+| `npm run db:setup` | `migrate + seed` in one (logs `{migrationsApplied, inserted, hash, sessions}`; `1/1` fresh → `0/0` warm; curated `PostgreSQL not reachable` preflight) |
+| `npx drizzle-kit push` | Push schema directly (prototyping only — not production-safe) |
+
+### Server Restart Procedures
+
+**When to restart:**
+- `.env` changed (`DATABASE_URL`, `NVIDIA_API_KEY`) — `src/db/index.ts` throws at import; Pool re-reads env only on (re)start.
+- New migration applied (`npm run db:migrate` / `db:setup`) or `docker compose up/down`.
+- `next.config.ts`, `src/app/globals.css` tokens, or `package.json` deps changed.
+
+**Dev server:**
+```bash
+# Ctrl+C then
+npm run dev                           # HMR keeps globalThis Pool; no docker restart needed for code-only edits
+```
+
+**Production preview (E2E prerequisite):**
+```bash
+npm run build && npm start            # reads .env at boot; needs DATABASE_URL
+# Port 3000 busy (sibling holds 3000/3001)? Use 3004:
+PORT=3004 npm start -- --port 3004 &  # bg; TEST_BASE_URL=http://localhost:3004 npx playwright test
+curl http://localhost:3004/api/health # {"ok":true}
+# Stale server masks new env (reuseExistingServer:true) — kill before re-running with new DATABASE_URL/NVIDIA_API_KEY:
+pkill -f "next start.*3004"; PORT=3004 NVIDIA_API_KEY="" npm start -- --port 3004
+```
+
+**Docker DB:**
+```bash
+docker compose up -d                  # start (health: starting → healthy in ~10s)
+docker compose logs -f postgres       # "ready to accept connections"
+docker compose down                   # stop (keep chat_data)
+docker compose down -v                # RESET — deletes chat_data (cold-start); then npm run db:setup
+```
+
+**Verify after restart:**
+```bash
+curl -s http://localhost:3000/api/health          # {"ok":true}
+curl -s http://localhost:3000/api/conversations | grep configured
+# 500 health → check DATABASE_URL, docker ps (healthy?), pg_isready -U chat_user -d chat_db
+```
 
 ## Testing Strategy
 
@@ -106,7 +155,7 @@ Audit history: the severity-ranked review at `docs/CODE_REVIEW_REPORT.md` record
 
 ## Code Quality Standards
 
-- Gate order: `npm run typecheck` → `npm run lint` → `npm test` → `npm run build`.
+- Gate order: `npm run typecheck` → `npm run lint` → `npm test` → `npm run build`. If DB touched: `npm run db:setup` → `curl /api/health` → (if UI touched) `npm run test:e2e` (build + start on `3004` if `3000` busy).
 - Never weaken a gate to pass it (no loosening types, no removing tests, no disabling rules) — fix the underlying issue.
 - Structured logs only: `console.error(JSON.stringify({ operation, ids, errorType }))`.
 
@@ -145,14 +194,17 @@ Request path: browser → `/api/chat` → origin + session + lease → conversat
 
 ### Database / Data Layer
 
-- Drizzle + `pg.Pool` (cached on `globalThis` in dev). Schema in `src/db/schema.ts`; conversations store `messages` as JSONB; FK cascade from sessions.
-- Use parameterized Drizzle queries exclusively; never string-concatenate SQL.
+- **Source of truth:** `drizzle.config.ts` reads `DATABASE_URL` via `dotenv/config` (`verbose:true strict:true`); no hard-coded URL. `drizzle` schema `drizzle` / table `__drizzle_migrations` stores hash `d5d43cb…`; SQL `drizzle/0000_flimsy_sage.sql`; extensions `pgcrypto` + `pg_trgm` via `infrastructure/postgres/init/00-create-extensions.sql` (once per volume).
+- **Pool:** `src/db/index.ts` `pg.Pool` cached on `globalThis` in dev, `drizzle(pool)`; throws at import if `DATABASE_URL` missing — every API route fails fast.
+- **Lifecycle:** `npm run db:generate` (edit schema → generate) → `npm run db:migrate` (wrapper: preflight `select 1` → `spawnSync drizzle-kit migrate` → post `{hash,sessions}`) → `npm run db:seed` (idempotent, `{inserted,reason,sessions}`) → `npm run db:setup` (migrate+seed, `{migrationsApplied,inserted}`). All via `node --experimental-strip-types scripts/*.mjs` (explicit `.ts` imports, injected `{db,tables}`).
+- **Idempotency:** `migrate` no-op when hash matches (same `[✓]` — check logged hash); `seed` `inserted:0` when `count>0` means "already seeded", not failure.
+- **Queries:** Parameterized Drizzle only; never string-concatenate SQL. See `scripts/migrate.mjs`/`db-setup.mjs` for curated `PostgreSQL not reachable at DATABASE_URL — run docker compose up -d` preflight pattern.
 
 ### Environment Variables
 
 | Variable | Purpose | Notes |
 |----------|---------|-------|
-| `DATABASE_URL` | PostgreSQL connection string | Required; app throws without it |
+| `DATABASE_URL` | PostgreSQL connection string | Required; app throws at import without it; local `postgresql://chat_user:chat_secret@127.0.0.1:5433/chat_db` (Docker `5433:5432`); wrappers preflight `select 1` → curated JSON on `ECONNREFUSED` |
 | `NVIDIA_API_KEY` | Provider key (server-only) | Optional locally; missing key → 503 with guidance |
 | `TEST_BASE_URL` | Playwright target origin | Optional; default `http://localhost:3000` |
 | `LIVE_SITE_URL` | Live-deployment E2E target | Optional; suite skips when unset |
