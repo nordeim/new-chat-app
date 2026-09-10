@@ -57,3 +57,41 @@ Verification order: `npm run typecheck` → `npm run lint` → `npm test` → `n
 - Operational debt: a private key was once committed at `docs/ssh-key.txt` (removed from tracking; still in git history — see `docs/CODE_REVIEW_REPORT.md`). Treat rotation as pending until the operator confirms it; never reintroduce key material.
 - `scripts/` holds operational CLI scripts (`.mjs` with explicit `.ts` import extensions — Node type-stripping requires extensions and does not resolve `@/` aliases; `src/lib/retention.ts` therefore keeps its runtime imports down to `drizzle-orm` and receives tables from the caller).
 - Findings from the latest tiered audit and their status live in `docs/CODE_REVIEW_REPORT.md`; consult it before planning work in this repo.
+
+---
+
+$ sudo docker compose -f docker-compose.yml up -d
+[+] up 3/3
+ ✔ Network new-chat-app_chat_net Created                                                                                                                                                                       0.5s
+ ✔ Volume new-chat-app_chat_data Created                                                                                                                                                                       0.1s
+ ✔ Container new_chat_postgres   Started                                                                                                                                                                       1.7s
+
+$ sudo docker ps
+CONTAINER ID   IMAGE                COMMAND                  CREATED         STATUS                            PORTS                                                   NAMES
+03dced90c2ba   postgres:17-alpine   "docker-entrypoint.s…"   16 seconds ago   Up 15 seconds (healthy)   5432/tcp, 0.0.0.0:5433->5433/tcp, [::]:5433->5433/tcp   new_chat_postgres
+
+$ npm run build
+npm notice run build
+npm notice run next build
+▲ Next.js 16.3.4 (Turbopack)
+- Environments: .env
+✓ Running next.config.ts took 45ms
+
+  Creating an optimized production build ...
+✓ Compiled successfully in 8.7s
+✓ Finished TypeScript in 5.1s
+✓ Collecting page data using 3 workers in 680ms
+✓ Generating static pages using 3 workers (4/4) in 300ms
+✓ Finalizing page optimization in 7ms
+
+Route (app)
+┌ ○ /
+├ ○ /_not-found
+├ ƒ /api/chat
+├ ƒ /api/conversations
+├ ƒ /api/conversations/[id]
+└ ƒ /api/health
+
+
+○  (Static)   prerendered as static content
+ƒ  (Dynamic)  server-rendered on demand
