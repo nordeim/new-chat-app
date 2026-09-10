@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
 import "./globals.css";
+import "./workspace-polish.css";
 
 export const metadata: Metadata = {
   title: "Kimi — A little more possible",

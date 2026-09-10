@@ -885,9 +885,13 @@ export default function ChatWorkspace() {
           ) : messages.length === 0 ? (
             <section className="welcome" aria-labelledby="welcome-title">
               <div className="welcome-emblem" aria-hidden="true">
-                <div className="emblem-glow" />
-                <Sparkles size={34} strokeWidth={1.35} />
-                <span className="emblem-star">✦</span>
+                <svg className="bloom-mark" viewBox="0 0 100 100" fill="none">
+                  {[0, 45, 90, 135].map((angle) => (
+                    <ellipse key={angle} cx="50" cy="50" rx="13" ry="37" transform={`rotate(${angle} 50 50)`} />
+                  ))}
+                  <circle cx="50" cy="50" r="6" />
+                </svg>
+                <span className="emblem-spark">✦</span>
               </div>
               <div className="welcome-eyebrow">
                 A LITTLE CURIOSITY. A WORLD OF POSSIBILITY.
