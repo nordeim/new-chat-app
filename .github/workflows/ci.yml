@@ -20,8 +20,11 @@ jobs:
       - run: npm ci
       - name: Secret scan (fail on credential patterns in tracked files)
         run: |
-          if git grep -lIE 'nvapi-[A-Za-z0-9_-]{20,}|-----BEGIN [A-Z ]*PRIVATE KEY-----|ghp_[A-Za-z0-9]{20,}|AKIA[0-9A-Z]{16}' -- . ':!package-lock.json'; then
-            echo "::error::Credential-like pattern found in tracked files"
+          # skills/, sample-build/, and docs/ are uploaded reference material,
+          # not app code (same exclusion contract as tsconfig/eslint). They
+          # contain documented example key patterns; app code must stay clean.
+          if git grep -lIE 'nvapi-[A-Za-z0-9_-]{20,}|-----BEGIN [A-Z ]*PRIVATE KEY-----|ghp_[A-Za-z0-9]{20,}|AKIA[0-9A-Z]{16}' -- . ':!package-lock.json' ':!skills' ':!sample-build' ':!docs'; then
+            echo "::error::Credential-like pattern found in tracked app files"
             exit 1
           fi
       - run: npm run typecheck

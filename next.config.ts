@@ -1,6 +1,8 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  // Do not advertise the framework version in production responses.
+  poweredByHeader: false,
   async headers() {
     return [
       {

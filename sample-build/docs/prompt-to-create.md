@@ -715,7 +715,7 @@ from langchain_nvidia_ai_endpoints import ChatNVIDIA
 
 client = ChatNVIDIA(
   model="moonshotai/kimi-k3",
-  api_key="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",
+  api_key="REDACTED-nvidia-api-key-rotate-any-live-key-see-CODE_REVIEW_REPORT",
   temperature=1,
 
   max_completion_tokens=16384,
