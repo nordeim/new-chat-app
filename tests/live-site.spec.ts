@@ -196,7 +196,10 @@ test.describe("live site — provider streaming", () => {
   test("sending a message streams a persisted assistant answer", async ({
     page,
   }, testInfo) => {
-    test.setTimeout(150_000);
+    // Long enough to observe the server's degraded-path banner: a stalled
+    // provider surfaces as a closed stream (~125s behind TLS ingress) or the
+    // 175s provider timeout, so the race window must exceed both.
+    test.setTimeout(240_000);
     await page.goto(base);
     await expect(
       page.getByRole("heading", { name: /Good things start/i }),
@@ -233,20 +236,23 @@ test.describe("live site — provider streaming", () => {
       | { kind: "streamed" }
       | { kind: "error-banner"; text: string }
       | { kind: "timeout" };
+    // Scope the race to the app's own error banner: Next.js injects a global
+    // route announcer with role="alert" (always present, empty), so
+    // getByRole("alert") would win the race instantly with empty text.
     const outcome: Outcome = await Promise.race([
       answer
         .first()
-        .waitFor({ timeout: 120_000 })
+        .waitFor({ timeout: 150_000 })
         .then(
           (): Outcome => ({ kind: "streamed" }),
         ),
       page
-        .getByRole("alert")
-        .waitFor({ timeout: 120_000 })
+        .locator(".error-banner")
+        .waitFor({ timeout: 150_000 })
         .then(
           async (): Promise<Outcome> => ({
             kind: "error-banner",
-            text: await page.getByRole("alert").innerText(),
+            text: await page.locator(".error-banner").innerText(),
           }),
         ),
     ]).catch((): Outcome => ({ kind: "timeout" }));
