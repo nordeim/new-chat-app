@@ -135,7 +135,7 @@ Requirements: **Node.js ≥ 22** and a **PostgreSQL** database.
 
 - Endpoint: `https://integrate.api.nvidia.com/v1/chat/completions`, model `moonshotai/kimi-k3`, streaming via `Accept: text/event-stream`.
 - Bearer authorization is sent only by the server; the key never reaches the browser.
-- Defaults: temperature 1, `max_tokens` 16,384, reasoning effort `max`.
+- Defaults: temperature 1, `max_tokens` 16,384 (selectable up to 256,000), reasoning effort `max`.
 - Image attachments use OpenAI-compatible `image_url` content blocks with inline PNG/JPEG/WebP data.
 - Provider reasoning is preserved in server-side history for multi-turn requests but never exposed to the browser; the UI shows a thinking status, then the answer.
 - Malformed, incomplete, oversized, and failed streams produce explicit errors; failed partial answers are not persisted, and retrying the same outstanding message does not append a duplicate user turn.
@@ -162,7 +162,7 @@ Every conversation read and mutation checks ownership. Writes require a same-ori
 
 Conversation text, images, and provider reasoning are stored in PostgreSQL, and prompts are sent to NVIDIA for inference. Deletion cascades to the conversation's inline data; it cannot revoke data previously processed by the provider. Configure encryption at rest and vendor retention terms appropriate to your organization.
 
-Limits: 100 conversations per workspace, 60 persisted messages per conversation, 16,000 characters per submitted prompt, 3 MB request body, approximately 8 MB existing history, and 600,000 response characters. One generation per session is enforced by an atomic database lease with a minimum 3-second interval; leases expire after 195 seconds so crashes cannot permanently block a workspace. Provider requests time out after 175 seconds. No automatic inference retries are used, avoiding duplicate billing and ambiguous persisted turns; users can retry explicitly.
+Limits: 100 conversations per workspace, 60 persisted messages per conversation, 16,000 characters per submitted prompt, 3 MB request body, ~16 MB existing history (was 8 MB), and 1,200,000 response characters (was 600k; includes thinking + answer). One generation per session is enforced by an atomic database lease (195s; 615s for `max_tokens > 16,384`) with a 3-second spacing; provider requests time out after 175s (590s for large outputs) and the route allows up to 600s (`maxDuration`). No automatic inference retries are used, avoiding duplicate billing and ambiguous persisted turns; users can retry explicitly.
 
 ### Before public or enterprise deployment
 

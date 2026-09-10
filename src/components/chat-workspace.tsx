@@ -1347,6 +1347,10 @@ export default function ChatWorkspace() {
             <option value={4096}>4,096 — everyday conversations</option>
             <option value={8192}>8,192 — more room to explore</option>
             <option value={16384}>16,384 — the full picture</option>
+            <option value={32768}>32,768 — extended</option>
+            <option value={65536}>65,536 — long-form</option>
+            <option value={131072}>131,072 — extra-long</option>
+            <option value={256000}>256,000 — maximum</option>
           </select>
           <p className="field-note">
             Includes thinking and answer tokens. Deep think works best with a

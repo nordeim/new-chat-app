@@ -19,7 +19,7 @@ export const chatInputSchema = z
     settings: z
       .object({
         temperature: z.number().min(0).max(2),
-        maxTokens: z.number().int().min(256).max(16384),
+        maxTokens: z.number().int().min(256).max(256000),
         reasoningEffort: z.enum(["low", "high", "max"]),
       })
       .strict(),

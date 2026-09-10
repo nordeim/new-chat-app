@@ -38,7 +38,7 @@ Verification order: `npm run typecheck` → `npm run lint` → `npm test` → `n
 
 ## Architecture map
 
-- `src/app/api/chat/route.ts` — the core: origin check → session → zod validation → image magic-byte check → atomic session lease (one generation per workspace, 3 s spacing, 195 s expiry) → conversation upsert with duplicate-retry guard → NVIDIA fetch with SSE parse → persistence of final answer only → SSE to browser.
+- `src/app/api/chat/route.ts` — the core: origin check → session → zod validation → image magic-byte check → atomic session lease (one generation per workspace, 3 s spacing, 195 s expiry; 615 s for `max_tokens > 16,384`) → conversation upsert with duplicate-retry guard → NVIDIA fetch with SSE parse (timeout 175 s; 590 s for large outputs, `maxDuration 600`) → persistence of final answer only → SSE to browser.
 - `src/app/api/conversations/` — list / search / read / rename / delete. The list endpoint accepts `?q=` (server-side ILIKE over title and JSONB message content, owner-filtered, wildcard-escaped). Every query filters by `owner`; delete uses a transaction with `FOR UPDATE` on the session row so it cannot race a running generation.
 - `src/lib/origin.ts` — pure same-origin gate shared by every write endpoint: accepts the origin when it matches `Host` OR the first `x-forwarded-host` value (trusted-ingress convention); rejects `sec-fetch-site: cross-site`, malformed origins, and non-http(s) schemes. Kept free of Next/DB imports so the unit suite can run it anywhere.
 - `src/lib/server.ts` — cookie session (`kimi_session`, 64-hex token; only the SHA-256 digest is stored as `owner`), `assertOrigin` (same-origin writes), bounded `readJson` (3 MB), `errorResponse` (structured logs without PII).
@@ -58,7 +58,7 @@ Verification order: `npm run typecheck` → `npm run lint` → `npm test` → `n
 - Error messages returned to clients are user-facing copy (specific, actionable). Do not replace them with generic text or leak provider internals.
 - Logs are structured JSON with `operation`, ids, and error types only — never message contents, cookies, or keys.
 - Provider reasoning (`reasoning_content`) is persisted for multi-turn context but stripped from every browser response (`conversations/[id]` GET maps it out; `done` event sends content only).
-- Limits are enforced server-side (60 messages/conversation, 100 conversations/workspace, 16k chars, 2 MB image, 600k response chars); the client mirrors some of them but the server is the authority.
+- Limits are enforced server-side (60 messages/conversation, 100 conversations/workspace, 16k chars, 2 MB image, 1,200k response chars up to 256k tokens; ~16 MB history); the client mirrors some of them but the server is the authority.
 - There is no `tailwind.config.js`; Tailwind v4 is wired through PostCSS and design tokens live in `src/app/globals.css` (`--mint` palette).
 - Do not weaken gates to make them pass (no `@ts-ignore`, no disabling rules, no deleting tests). Fix root causes.
 - Keep all commits on `main`.

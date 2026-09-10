@@ -24,10 +24,26 @@ test("rejects empty, oversized, unknown, and malformed input", () => {
     { ...input, conversationId: "../x" },
     { ...input, role: "system" },
     { ...input, image: "https://localhost/private" },
-    { ...input, settings: { ...input.settings, maxTokens: 20000 } },
+    { ...input, settings: { ...input.settings, maxTokens: 300000 } },
   ]) {
     assert.equal(chatInputSchema.safeParse(value).success, false);
   }
+});
+test("accepts maxTokens up to 256000 (graduated)", () => {
+  assert.equal(
+    chatInputSchema.safeParse({
+      ...input,
+      settings: { ...input.settings, maxTokens: 256000 },
+    }).success,
+    true,
+  );
+  assert.equal(
+    chatInputSchema.safeParse({
+      ...input,
+      settings: { ...input.settings, maxTokens: 65536 },
+    }).success,
+    true,
+  );
 });
 test("validates title boundaries", () => {
   assert.equal(titleSchema.safeParse({ title: "a".repeat(100) }).success, true);

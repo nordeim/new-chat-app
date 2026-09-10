@@ -14,7 +14,7 @@ import { SSEParser } from "@/lib/sse";
 import type { ChatMessage } from "@/lib/types";
 
 export const runtime = "nodejs";
-export const maxDuration = 180;
+export const maxDuration = 600;
 
 export async function POST(req: NextRequest) {
   let owner: string | undefined;
@@ -61,7 +61,9 @@ export async function POST(req: NextRequest) {
         );
     }
     const now = new Date();
-    const proposedLease = new Date(now.getTime() + 195_000);
+    const isLongOutput = input.settings.maxTokens > 16384;
+    const leaseMs = isLongOutput ? 615_000 : 195_000;
+    const proposedLease = new Date(now.getTime() + leaseMs);
     const [claimed] = await db
       .update(sessions)
       .set({ busyUntil: proposedLease, lastRequest: now })
@@ -103,7 +105,7 @@ export async function POST(req: NextRequest) {
         );
       if (
         conversation.messages.length >= 60 ||
-        JSON.stringify(conversation.messages).length > 8_000_000
+        JSON.stringify(conversation.messages).length > 16_000_000
       )
         throw new ApiError(
           400,
@@ -142,10 +144,11 @@ export async function POST(req: NextRequest) {
     }
     const saved = conversation;
     const aborter = new AbortController();
+    const timeoutMs = isLongOutput ? 590_000 : 175_000;
     const signal = AbortSignal.any([
       aborter.signal,
       req.signal,
-      AbortSignal.timeout(175_000),
+      AbortSignal.timeout(timeoutMs),
     ]);
     const encoder = new TextEncoder();
     const stream = new ReadableStream<Uint8Array>({
@@ -255,7 +258,7 @@ export async function POST(req: NextRequest) {
               }
               if (
                 assistant.content.length + (assistant.reasoning?.length ?? 0) >
-                600_000
+                1_200_000
               )
                 throw new Error("Response size limit exceeded");
             }
