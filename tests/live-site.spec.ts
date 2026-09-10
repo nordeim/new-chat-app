@@ -1,6 +1,6 @@
 // Live-deployment E2E. Skipped entirely unless LIVE_SITE_URL is set:
 //   LIVE_SITE_URL=https://kimi-chat.example.com npx playwright test tests/live-site.spec.ts
-// Read-only except a single minimal chat send when the provider is configured.
+// One minimal send plus deletion of that test-owned conversation when configured.
 import { test, expect } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
 
@@ -149,6 +149,7 @@ test.describe("live site — API contract", () => {
     expect(setCookie).toContain("kimi_session=");
     expect(setCookie.toLowerCase()).toContain("httponly");
     expect(setCookie.toLowerCase()).toContain("samesite=strict");
+    expect(setCookie.toLowerCase()).toContain("secure");
   });
 
   test("cross-origin write to chat API is rejected", async ({ request }) => {
@@ -157,7 +158,7 @@ test.describe("live site — API contract", () => {
       headers: { Origin: "https://untrusted.example" },
       data: { content: "hi", settings: {} },
     });
-    expect([403, 400]).toContain(response.status());
+    expect(response.status()).toBe(403);
   });
 
   test("invalid conversation id returns 400", async ({ request }) => {
@@ -242,13 +243,13 @@ test.describe("live site — provider streaming", () => {
     const outcome: Outcome = await Promise.race([
       answer
         .first()
-        .waitFor({ timeout: 150_000 })
+        .waitFor({ timeout: 200_000 })
         .then(
           (): Outcome => ({ kind: "streamed" }),
         ),
       page
         .locator(".error-banner")
-        .waitFor({ timeout: 150_000 })
+        .waitFor({ timeout: 200_000 })
         .then(
           async (): Promise<Outcome> => ({
             kind: "error-banner",
@@ -266,7 +267,7 @@ test.describe("live site — provider streaming", () => {
       throw new Error(
         outcome.kind === "error-banner"
           ? `Provider send surfaced an error banner: ${outcome.text}`
-          : "No streamed answer or error banner within 120 s.",
+          : "No streamed answer or error banner within 200 s.",
       );
     await expect(
       page.getByRole("button", { name: "Copy response" }),
@@ -274,12 +275,19 @@ test.describe("live site — provider streaming", () => {
     // The answer must be persisted to the workspace history.
     const persisted = await page.request.get(`${base}/api/conversations`);
     const history = (await persisted.json()) as {
-      conversations: { title: string }[];
+      conversations: { id: string; title: string }[];
     };
-    expect(
-      history.conversations.some((item) =>
-        item.title.startsWith("Reply with exactly"),
-      ),
-    ).toBe(true);
+    const saved = history.conversations.find((item) => item.title.includes(nonce));
+    expect(saved).toBeDefined();
+    const detail = await page.request.get(`${base}/api/conversations/${saved!.id}`);
+    expect(detail.status()).toBe(200);
+    const data = (await detail.json()) as {
+      conversation: { messages: { role: string; content: string; reasoning?: string }[] };
+    };
+    expect(data.conversation.messages.some((message) => message.role === "assistant" && message.content.includes(nonce))).toBe(true);
+    expect(data.conversation.messages.every((message) => message.reasoning === undefined)).toBe(true);
+    // Remove only this test's conversation; never touch pre-existing histories.
+    const cleanup = await page.request.delete(`${base}/api/conversations/${saved!.id}`, { headers: { Origin: base } });
+    expect(cleanup.status()).toBe(200);
   });
 });
