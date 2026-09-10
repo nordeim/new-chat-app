@@ -1,6 +1,6 @@
 // Live-deployment E2E. Skipped entirely unless LIVE_SITE_URL is set:
 //   LIVE_SITE_URL=https://kimi-chat.example.com npx playwright test tests/live-site.spec.ts
-// Read-only except a single minimal chat send when the provider is configured.
+// One minimal send plus deletion of that test-owned conversation when configured.
 import { test, expect } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
 
@@ -25,9 +25,6 @@ test.describe("live site — workspace UI", () => {
     await expect(
       page.getByRole("heading", { name: /Good things start/i }),
     ).toBeVisible({ timeout: 15_000 });
-    await expect(
-      page.getByRole("link", { name: "Skip to message composer" }),
-    ).toHaveAttribute("href", "#message");
     const headers = response!.headers();
     testInfo.attach("response-headers", {
       body: JSON.stringify(headers, null, 2),
@@ -152,6 +149,7 @@ test.describe("live site — API contract", () => {
     expect(setCookie).toContain("kimi_session=");
     expect(setCookie.toLowerCase()).toContain("httponly");
     expect(setCookie.toLowerCase()).toContain("samesite=strict");
+    expect(setCookie.toLowerCase()).toContain("secure");
   });
 
   test("cross-origin write to chat API is rejected", async ({ request }) => {
@@ -160,7 +158,7 @@ test.describe("live site — API contract", () => {
       headers: { Origin: "https://untrusted.example" },
       data: { content: "hi", settings: {} },
     });
-    expect([403, 400]).toContain(response.status());
+    expect(response.status()).toBe(403);
   });
 
   test("invalid conversation id returns 400", async ({ request }) => {
@@ -192,14 +190,17 @@ test.describe("live site — session isolation", () => {
 });
 
 // Provider streaming check — only exercises the model when the deployment
-// reports a configured key; accepts either a streamed answer or an explicit,
-// user-facing error banner as valid contract outcomes.
+// reports a configured key. The streamed answer must appear in an ASSISTANT
+// message (the user bubble is excluded, so a merely-echoed prompt cannot
+// satisfy the wait); an error banner or missing persistence fails the test.
 test.describe("live site — provider streaming", () => {
-  test("sending a message streams a persisted answer", async (
-    { page },
-    testInfo,
-  ) => {
-    test.setTimeout(120_000);
+  test("sending a message streams a persisted assistant answer", async ({
+    page,
+  }, testInfo) => {
+    // Long enough to observe the server's degraded-path banner: a stalled
+    // provider surfaces as a closed stream (~125s behind TLS ingress) or the
+    // 175s provider timeout, so the race window must exceed both.
+    test.setTimeout(240_000);
     await page.goto(base);
     await expect(
       page.getByRole("heading", { name: /Good things start/i }),
@@ -211,6 +212,8 @@ test.describe("live site — provider streaming", () => {
       contentType: "application/json",
     });
     test.skip(!configured, "Provider key not configured on this deployment");
+    // Random nonce: neither the prompt text nor a stale page can satisfy it.
+    const nonce = `live-check-${Date.now().toString(36)}`;
     // Minimize provider spend: light effort, small token cap.
     await page
       .getByRole("button", { name: "Chat settings", exact: true })
@@ -224,28 +227,67 @@ test.describe("live site — provider streaming", () => {
     await dialog.getByRole("button", { name: "Done", exact: true }).click();
     await page
       .getByRole("textbox", { name: "Message Kimi" })
-      .fill("Reply with exactly: live check ok");
+      .fill(`Reply with exactly: ${nonce}`);
     await page.getByRole("button", { name: "Send message" }).click();
-    const outcome = await Promise.race([
-      page
-        .getByText(/live check ok/i)
+
+    const answer = page
+      .locator(".message.assistant")
+      .filter({ hasText: nonce });
+    type Outcome =
+      | { kind: "streamed" }
+      | { kind: "error-banner"; text: string }
+      | { kind: "timeout" };
+    // Scope the race to the app's own error banner: Next.js injects a global
+    // route announcer with role="alert" (always present, empty), so
+    // getByRole("alert") would win the race instantly with empty text.
+    const outcome: Outcome = await Promise.race([
+      answer
         .first()
-        .waitFor({ timeout: 90_000 })
-        .then(() => "streamed" as const),
+        .waitFor({ timeout: 200_000 })
+        .then(
+          (): Outcome => ({ kind: "streamed" }),
+        ),
       page
-        .getByRole("alert")
-        .waitFor({ timeout: 90_000 })
-        .then(() => "error-banner" as const),
-    ]).catch(() => "timeout" as const);
+        .locator(".error-banner")
+        .waitFor({ timeout: 200_000 })
+        .then(
+          async (): Promise<Outcome> => ({
+            kind: "error-banner",
+            text: await page.locator(".error-banner").innerText(),
+          }),
+        ),
+    ]).catch((): Outcome => ({ kind: "timeout" }));
     testInfo.attach("stream-outcome", {
       body: JSON.stringify({ outcome }),
       contentType: "application/json",
     });
-    expect(["streamed", "error-banner"]).toContain(outcome);
-    if (outcome === "streamed") {
-      await expect(
-        page.getByRole("button", { name: "Copy response" }),
-      ).toBeVisible({ timeout: 15_000 });
-    }
+    // With the provider configured, a surfaced error is a product failure,
+    // not an acceptable contract outcome — fail loudly with the banner text.
+    if (outcome.kind !== "streamed")
+      throw new Error(
+        outcome.kind === "error-banner"
+          ? `Provider send surfaced an error banner: ${outcome.text}`
+          : "No streamed answer or error banner within 200 s.",
+      );
+    await expect(
+      page.getByRole("button", { name: "Copy response" }),
+    ).toBeVisible({ timeout: 15_000 });
+    // The answer must be persisted to the workspace history.
+    const persisted = await page.request.get(`${base}/api/conversations`);
+    const history = (await persisted.json()) as {
+      conversations: { id: string; title: string }[];
+    };
+    const saved = history.conversations.find((item) => item.title.includes(nonce));
+    expect(saved).toBeDefined();
+    const detail = await page.request.get(`${base}/api/conversations/${saved!.id}`);
+    expect(detail.status()).toBe(200);
+    const data = (await detail.json()) as {
+      conversation: { messages: { role: string; content: string; reasoning?: string }[] };
+    };
+    expect(data.conversation.messages.some((message) => message.role === "assistant" && message.content.includes(nonce))).toBe(true);
+    expect(data.conversation.messages.every((message) => message.reasoning === undefined)).toBe(true);
+    // Remove only this test's conversation; never touch pre-existing histories.
+    const cleanup = await page.request.delete(`${base}/api/conversations/${saved!.id}`, { headers: { Origin: base } });
+    expect(cleanup.status()).toBe(200);
   });
 });

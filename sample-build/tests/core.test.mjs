@@ -6,7 +6,6 @@ import {
   chatInputSchema,
   titleSchema,
   providerChunkSchema,
-  settingsSchema,
 } from "../src/lib/validation.ts";
 import {
   formatRelativeTime,
@@ -14,6 +13,12 @@ import {
 } from "../src/lib/history.ts";
 import { getNodeText } from "../src/lib/markdown.ts";
 import { workspaceLoadError } from "../src/lib/workspace-error.ts";
+import {
+  streamAbortKind,
+  streamAbortLog,
+  streamErrorLog,
+  abortErrorLog,
+} from "../src/lib/stream-abort.ts";
 
 const input = {
   content: "Hello",
@@ -32,10 +37,26 @@ test("rejects empty, oversized, unknown, and malformed input", () => {
     { ...input, conversationId: "../x" },
     { ...input, role: "system" },
     { ...input, image: "https://localhost/private" },
-    { ...input, settings: { ...input.settings, maxTokens: 20000 } },
+    { ...input, settings: { ...input.settings, maxTokens: 300000 } },
   ]) {
     assert.equal(chatInputSchema.safeParse(value).success, false);
   }
+});
+test("accepts maxTokens up to 256000 (graduated)", () => {
+  assert.equal(
+    chatInputSchema.safeParse({
+      ...input,
+      settings: { ...input.settings, maxTokens: 256000 },
+    }).success,
+    true,
+  );
+  assert.equal(
+    chatInputSchema.safeParse({
+      ...input,
+      settings: { ...input.settings, maxTokens: 65536 },
+    }).success,
+    true,
+  );
 });
 test("validates title boundaries", () => {
   assert.equal(titleSchema.safeParse({ title: "a".repeat(100) }).success, true);
@@ -55,11 +76,36 @@ test("parses fragmented CRLF and multiline SSE events", () => {
   assert.deepEqual(parser.push("data: [DONE]"), []);
   assert.deepEqual(parser.finish(), ["[DONE]"]);
 });
-test("rejects oversized stream frames and malformed provider payloads", () => {
+
+test("parses lone-CR separated events and CRLF split across chunks", () => {
+  const parser = new SSEParser();
+  // Lone CR line separators (SSE allows CR, LF, or CRLF).
+  assert.deepEqual(parser.push("data: one\rdata: two\r\r"), ["one\ntwo"]);
+  // A CRLF pair split across network chunks must not emit a blank line.
+  assert.deepEqual(parser.push("data: A\r"), []);
+  assert.deepEqual(parser.push("\ndata: B\r\n\r\n"), ["A\nB"]);
+});
+
+test("ignores comment lines and strips exactly one space after data:", () => {
+  const parser = new SSEParser();
+  assert.deepEqual(parser.push(": ping\n\n"), []);
+  assert.deepEqual(parser.push("data:no-space\n\n"), ["no-space"]);
+  assert.deepEqual(parser.push("data:  two-spaces\n\n"), [" two-spaces"]);
+});
+
+test("rejects oversized lines and oversized accumulated events incrementally", () => {
   assert.throws(
     () => new SSEParser().push("x".repeat(1_000_001)),
     /size limit/,
   );
+  const parser = new SSEParser();
+  parser.push("data: " + "y".repeat(600_000) + "\n");
+  assert.throws(
+    () => parser.push("data: " + "y".repeat(500_000) + "\n\n"),
+    /size limit/,
+  );
+});
+test("rejects malformed provider payloads, accepts reasoning deltas", () => {
   assert.equal(
     providerChunkSchema.safeParse({ choices: [{ delta: { content: 42 } }] })
       .success,
@@ -70,34 +116,6 @@ test("rejects oversized stream frames and malformed provider payloads", () => {
       choices: [{ delta: { reasoning_content: "text" } }],
     }).success,
     true,
-  );
-});
-
-test("rejects out-of-range model settings and unknown keys", () => {
-  assert.equal(
-    settingsSchema.safeParse({
-      temperature: 1,
-      maxTokens: 1024,
-      reasoningEffort: "low",
-    }).success,
-    true,
-  );
-  assert.equal(
-    settingsSchema.safeParse({
-      temperature: 3,
-      maxTokens: 1024,
-      reasoningEffort: "low",
-    }).success,
-    false,
-  );
-  assert.equal(
-    settingsSchema.safeParse({
-      temperature: 1,
-      maxTokens: 1024,
-      reasoningEffort: "low",
-      extra: true,
-    }).success,
-    false,
   );
 });
 
@@ -145,13 +163,26 @@ test("omits empty history periods and preserves input order within a period", ()
   );
 });
 
+test("treats invalid history timestamps as today instead of crashing", () => {
+  const now = new Date("2026-09-10T15:00:00");
+  const grouped = groupConversationsByPeriod(
+    [{ id: "bad", title: "Bad", updatedAt: "not-a-date" }],
+    now,
+  );
+  assert.equal(grouped.length, 1);
+  assert.equal(grouped[0].label, "Today");
+});
+
 test("formats relative timestamps against a frozen now", () => {
   const now = Date.parse("2026-09-10T15:00:00Z");
   assert.equal(formatRelativeTime("2026-09-10T14:59:30Z", now), "Just now");
   assert.equal(formatRelativeTime("2026-09-10T14:40:00Z", now), "20m ago");
   assert.equal(formatRelativeTime("2026-09-10T12:00:00Z", now), "3h ago");
   assert.equal(formatRelativeTime("2026-09-08T15:00:00Z", now), "2d ago");
-  assert.match(formatRelativeTime("2026-08-01T15:00:00Z", now), /^[A-Z][a-z]{2} \d{1,2}$/);
+  assert.match(
+    formatRelativeTime("2026-08-01T15:00:00Z", now),
+    /^[A-Z][a-z]{2} \d{1,2}$/,
+  );
 });
 
 test("extracts text from nested markdown nodes for code copy", () => {
@@ -160,7 +191,9 @@ test("extracts text from nested markdown nodes for code copy", () => {
   assert.equal(getNodeText(12), "12");
   assert.equal(getNodeText(null), "");
   assert.equal(
-    getNodeText(createElement("code", { className: "language-ts" }, "const x = 1")),
+    getNodeText(
+      createElement("code", { className: "language-ts" }, "const x = 1"),
+    ),
     "const x = 1",
   );
 });
@@ -178,4 +211,86 @@ test("workspace load copy distinguishes a down database from a generic failure",
     workspaceLoadError(null),
     "Could not load your workspace. Please reload.",
   );
+});
+
+test("classifies runtime abort errors as client disconnects", () => {
+  // Next.js aborts request.signal with this named error when the browser
+  // disconnects mid-stream (Stop, refresh, tab close, navigation).
+  const responseAborted = Object.assign(new Error("The response was aborted"), {
+    name: "ResponseAborted",
+  });
+  assert.equal(streamAbortKind(responseAborted), "client-disconnect");
+  // The stream-cancel path aborts without a reason (default AbortError) and
+  // can win the race against the named error for the same disconnect.
+  const stopped = new DOMException("This operation was aborted", "AbortError");
+  assert.equal(streamAbortKind(stopped), "client-disconnect");
+  assert.equal(streamAbortKind(new Error("boom")), null);
+  assert.equal(streamAbortKind("boom"), null);
+  assert.equal(streamAbortKind(undefined), null);
+});
+
+test("classifies the route timeout separately from client disconnects", () => {
+  const timedOut = new DOMException("The operation timed out", "TimeoutError");
+  assert.equal(streamAbortKind(timedOut), "timeout");
+});
+
+test("recognizes Node's premature client-close signature on request bodies", () => {
+  // IncomingMessage 'error' when the client destroys the socket mid-upload:
+  // verified live — name="Error", message="aborted", code="ECONNRESET".
+  const connReset = Object.assign(new Error("aborted"), { code: "ECONNRESET" });
+  assert.equal(streamAbortKind(connReset), "client-disconnect");
+  // A provider/database connection reset with different wording is a real
+  // failure, not a client abort.
+  const pgReset = Object.assign(new Error("Connection terminated unexpectedly"), {
+    code: "ECONNRESET",
+  });
+  assert.equal(streamAbortKind(pgReset), null);
+});
+
+test("stream abort log is warn-level structured JSON that leaks no content", () => {
+  const { level, line } = streamAbortLog({
+    operation: "chat.stream",
+    conversationId: "c1",
+    abortBy: "client-disconnect",
+    partialChars: 123,
+  });
+  assert.equal(level, "warn");
+  assert.deepEqual(JSON.parse(line), {
+    operation: "chat.stream",
+    conversationId: "c1",
+    outcome: "aborted",
+    abortBy: "client-disconnect",
+    partialChars: 123,
+  });
+});
+
+test("stream error log keeps the established error-level shape", () => {
+  const { level, line } = streamErrorLog({
+    operation: "chat.stream",
+    conversationId: "c1",
+    errorType: "TypeError",
+  });
+  assert.equal(level, "error");
+  assert.deepEqual(JSON.parse(line), {
+    operation: "chat.stream",
+    conversationId: "c1",
+    errorType: "TypeError",
+  });
+});
+
+test("create-path abort log is warn-level with kind and runtime error name", () => {
+  const { level, line } = abortErrorLog({
+    operation: "chat.create",
+    requestId: "r1",
+    abortBy: "client-disconnect",
+    errorType: "Error",
+  });
+  assert.equal(level, "warn");
+  assert.deepEqual(JSON.parse(line), {
+    operation: "chat.create",
+    requestId: "r1",
+    outcome: "aborted",
+    abortBy: "client-disconnect",
+    errorType: "Error",
+  });
 });

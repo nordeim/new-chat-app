@@ -38,8 +38,8 @@ import {
   ExternalLink,
   Loader2,
   Command,
-    ShieldCheck,
-    Eye,
+  ShieldCheck,
+  Eye,
   MoreHorizontal,
 } from "lucide-react";
 import {
@@ -53,9 +53,12 @@ import {
   formatRelativeTime,
   groupConversationsByPeriod,
 } from "@/lib/history";
-import { workspaceLoadError } from "@/lib/workspace-error";
+import {
+  workspaceLoadError,
+} from "@/lib/workspace-error";
 import { MarkdownMessage } from "@/components/markdown-message";
 import { ImageLightbox } from "@/components/image-lightbox";
+import NavigationFrame from "@/components/navigation-frame";
 
 const categories = [
   {
@@ -181,6 +184,9 @@ function Modal({
   );
 }
 
+// Only curated application errors may be shown verbatim to the user.
+class WorkspaceRequestError extends Error {}
+
 async function apiJson(response: Response): Promise<unknown> {
   let data: unknown;
   try {
@@ -190,7 +196,7 @@ async function apiJson(response: Response): Promise<unknown> {
   }
   if (!response.ok) {
     const error = z.object({ error: z.string() }).safeParse(data);
-    throw new Error(
+    throw new WorkspaceRequestError(
       error.success
         ? error.data.error
         : "The request failed. Please try again.",
@@ -204,7 +210,7 @@ async function apiJson(response: Response): Promise<unknown> {
 function parseOrReload<T extends z.ZodTypeAny>(schema: T, data: unknown): z.infer<T> {
   const result = schema.safeParse(data);
   if (!result.success)
-    throw new Error("Could not load your workspace. Please reload.");
+    throw new WorkspaceRequestError("Could not load your workspace. Please reload.");
   return result.data;
 }
 
@@ -247,9 +253,12 @@ export default function ChatWorkspace() {
     "search" | "settings" | "help" | "model" | "rename" | "delete" | null
   >(null);
   const [search, setSearch] = useState("");
-  const [serverResults, setServerResults] = useState<
-    ConversationSummary[] | null
-  >(null);
+  const [serverSearch, setServerSearch] = useState<{
+    term: string;
+    items: ConversationSummary[];
+    failed: boolean;
+  } | null>(null);
+  const [searchAttempt, setSearchAttempt] = useState(0);
   const [rename, setRename] = useState("");
   const [mutationBusy, setMutationBusy] = useState(false);
   const [copied, setCopied] = useState<string>();
@@ -260,14 +269,12 @@ export default function ChatWorkspace() {
   const bottomRef = useRef<HTMLDivElement>(null);
   const openingRef = useRef(0);
   const current = history.find((item) => item.id === currentId);
-  const filteredHistory = history.filter((item) =>
-    item.title.toLowerCase().includes(search.toLowerCase()),
-  );
-  const searchTerm = search.trim();
-  const searchMatches = searchTerm
-    ? (serverResults ?? filteredHistory)
-    : filteredHistory;
   const groupedHistory = groupConversationsByPeriod(history);
+  const filteredHistory = history.filter((item) =>
+    item.title.toLowerCase().includes(search.trim().toLowerCase()),
+  );
+  const currentSearch = serverSearch?.term === search.trim() ? serverSearch : null;
+  const searchMatches = currentSearch && !currentSearch.failed ? currentSearch.items : filteredHistory;
 
   // Loads (or reloads) the workspace. Returns a dispose function so effects can
   // ignore stale responses; state updates happen only in async callbacks.
@@ -281,6 +288,9 @@ export default function ChatWorkspace() {
         setReady(true);
       })
       .catch(() => {
+        // Distinguish a database outage from a generic failure so the banner
+        // points at the actual recovery step. A non-JSON or failed health
+        // probe falls back to the reload guidance.
         void fetch("/api/health", { cache: "no-store" })
           .then(async (response) => {
             try {
@@ -302,10 +312,8 @@ export default function ChatWorkspace() {
 
   useEffect(() => refresh(), [refresh]);
 
-  // Non-empty search terms query the server (titles + message content).
-  // While a request is in flight the previous result set stays visible; if a
-  // search request fails, the modal degrades to local title filtering rather
-  // than showing a dead end for a type-ahead picker.
+  // A result belongs to its query, never to the input that happens to be
+  // visible when it arrives. Failures explicitly fall back to local titles.
   useEffect(() => {
     const term = search.trim();
     if (!term) return;
@@ -315,25 +323,24 @@ export default function ChatWorkspace() {
         cache: "no-store",
         signal: controller.signal,
       })
-        .then(async (response) =>
-          response.ok ? apiJson(response) : Promise.reject(response.status),
-        )
-        .then((data: unknown) => {
-          if (controller.signal.aborted) return;
-          const parsed = z
-            .object({ conversations: z.array(summarySchema) })
-            .safeParse(data);
-          if (parsed.success) setServerResults(parsed.data.conversations);
+        .then(async (response) => {
+          const data = await apiJson(response);
+          return parseOrReload(z.object({ conversations: z.array(summarySchema) }), data);
+        })
+        .then((data) => {
+          if (!controller.signal.aborted)
+            setServerSearch({ term, items: data.conversations, failed: false });
         })
         .catch(() => {
-          // Abort or network failure: keep local title results visible.
+          if (!controller.signal.aborted)
+            setServerSearch({ term, items: [], failed: true });
         });
     }, 250);
     return () => {
       controller.abort();
       clearTimeout(timer);
     };
-  }, [search]);
+  }, [search, searchAttempt]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "instant", block: "end" });
@@ -382,6 +389,8 @@ export default function ChatWorkspace() {
   async function openConversation(id: string) {
     if (busy) return;
     const opening = ++openingRef.current;
+    // Never send into the previous chat if this navigation fails.
+    setCurrentId(undefined);
     setLoadingChat(true);
     setMessages([]);
     setError("");
@@ -423,10 +432,12 @@ export default function ChatWorkspace() {
   async function upload(file?: File) {
     if (!file) return;
     if (
-      !["image/png", "image/jpeg", "image/webp"].includes(file.type) ||
+      !(["image/png", "image/jpeg", "image/webp"] as string[]).includes(
+        file.type,
+      ) ||
       file.size > 2 * 1024 * 1024
     ) {
-      setError("Choose a PNG, JPEG, or WebP image under 2 MB.");
+      setError("Choose a PNG, JPEG, or WebP image up to 2 MB.");
       return;
     }
     try {
@@ -457,7 +468,10 @@ export default function ChatWorkspace() {
     event?.preventDefault();
     const content = retryMessage?.content ?? draft.trim();
     const image = retryMessage?.image ?? attachment?.data;
-    if (!content || busy || !ready || loadingChat) return;
+    // abortRef doubles as a send latch: it is non-null exactly while a
+    // stream is in flight, closing the Enter/click race the closure-based
+    // `busy` check cannot structurally prevent.
+    if (!content || busy || !ready || loadingChat || abortRef.current) return;
     const previousMessages = messages;
     const newUser: ChatMessage = {
       id: crypto.randomUUID(),
@@ -497,13 +511,25 @@ export default function ChatWorkspace() {
         return;
       }
       if (!response.body)
-        throw new Error("Streaming is unavailable. Please try again.");
+        throw new WorkspaceRequestError("Streaming is unavailable. Please try again.");
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
-      const parser = new SSEParser();
+      // A final answer can contain 1.2M characters. JSON escaping can expand
+      // each character sixfold; provider frames keep the smaller default cap.
+      const parser = new SSEParser(8_000_000);
       const consume = (events: string[]) => {
         for (const value of events) {
-          const item = streamEventSchema.parse(JSON.parse(value));
+          let item: z.infer<typeof streamEventSchema>;
+          try {
+            item = streamEventSchema.parse(JSON.parse(value));
+          } catch {
+            // A degraded proxy/server can emit malformed frames. Same client
+            // boundary as parseOrReload: raw parse/schema text never reaches
+            // the banner. Server error events below carry their own copy.
+            throw new WorkspaceRequestError(
+              "The response stream was interrupted. Please try again.",
+            );
+          }
           if (item.type === "meta") {
             accepted = true;
             setCurrentId(item.conversation.id);
@@ -531,7 +557,7 @@ export default function ChatWorkspace() {
               ),
             );
           }
-          if (item.type === "error") throw new Error(item.message);
+          if (item.type === "error") throw new WorkspaceRequestError(item.message);
         }
       };
       try {
@@ -549,14 +575,14 @@ export default function ChatWorkspace() {
         reader.releaseLock();
       }
       if (!finished)
-        throw new Error("The connection ended early. Please try again.");
+        throw new WorkspaceRequestError("The connection ended early. Please try again.");
     } catch (err) {
       setError(
         aborter.signal.aborted
           ? "Response stopped. You can try again when you’re ready."
-          : err instanceof Error
+          : err instanceof WorkspaceRequestError
             ? err.message
-            : "Could not send your message. Please try again.",
+            : "The connection was interrupted. Check your network and try again.",
       );
       if (!accepted) {
         setMessages(previousMessages);
@@ -564,9 +590,17 @@ export default function ChatWorkspace() {
         if (image) setAttachment({ data: image, name: "Attached image" });
       } else setMessages(base);
     } finally {
-      setBusy(false);
-      setThinking(false);
-      abortRef.current = null;
+      // Defer the busy flip by one macrotask. The click that hit "Stop" is
+      // still being processed when the aborted fetch rejects: swapping the
+      // stop button for the submit button inside that same input task makes
+      // Chromium re-target the click's activation to the new default button,
+      // re-submitting the form as an instant duplicate send (observed with a
+      // plain hanging request — no route interception involved).
+      setTimeout(() => {
+        setBusy(false);
+        setThinking(false);
+        abortRef.current = null;
+      }, 0);
     }
   }
 
@@ -644,17 +678,11 @@ export default function ChatWorkspace() {
       <a className="skip-link" href="#message">
         Skip to message composer
       </a>
-      {mobileOpen && (
-        <button
-          className="mobile-scrim"
-          aria-label="Close navigation"
-          onClick={() => setMobileOpen(false)}
-        />
-      )}
-      <aside
-        className={`sidebar ${mobileOpen ? "mobile-open" : ""}`}
-        aria-label="Workspace navigation"
-      >
+      <NavigationFrame open={mobileOpen} onOpenChange={setMobileOpen}>
+        <aside
+          className={`sidebar ${mobileOpen ? "mobile-open" : ""}`}
+          aria-label="Workspace navigation"
+        >
         <div className="brand-row">
           <button className="brand" onClick={newChat} aria-label="Kimi home">
             <KimiMark />
@@ -662,6 +690,13 @@ export default function ChatWorkspace() {
               kimi<span className="brand-dot">.</span>
             </span>
             <span className="workspace-label">WORKSPACE</span>
+          </button>
+          <button
+            className="icon-button sidebar-close"
+            aria-label="Close navigation"
+            onClick={() => setMobileOpen(false)}
+          >
+            <X size={17} />
           </button>
           <button
             className="icon-button collapse-button"
@@ -701,7 +736,7 @@ export default function ChatWorkspace() {
             <MoreHorizontal size={17} />
           </button>
         </div>
-        <nav className="conversation-list" aria-label="Saved conversations">
+        <nav className="conversation-list" aria-label="Saved conversations" tabIndex={0}>
           {history.length > 0 ? (
             groupedHistory.map((group) => (
               <div key={group.label}>
@@ -773,7 +808,8 @@ export default function ChatWorkspace() {
         <div className="sidebar-footnote">
           <span className="tiny-dot" /> A little more possible.
         </div>
-      </aside>
+        </aside>
+      </NavigationFrame>
 
       <main className="main-panel">
         <header className="topbar">
@@ -838,9 +874,13 @@ export default function ChatWorkspace() {
           ) : messages.length === 0 ? (
             <section className="welcome" aria-labelledby="welcome-title">
               <div className="welcome-emblem" aria-hidden="true">
-                <div className="emblem-glow" />
-                <Sparkles size={34} strokeWidth={1.35} />
-                <span className="emblem-star">✦</span>
+                <svg className="bloom-mark" viewBox="0 0 100 100" fill="none">
+                  {[0, 45, 90, 135].map((angle) => (
+                    <ellipse key={angle} cx="50" cy="50" rx="13" ry="37" transform={`rotate(${angle} 50 50)`} />
+                  ))}
+                  <circle cx="50" cy="50" r="6" />
+                </svg>
+                <span className="emblem-spark">✦</span>
               </div>
               <div className="welcome-eyebrow">
                 A LITTLE CURIOSITY. A WORLD OF POSSIBILITY.
@@ -1039,7 +1079,7 @@ export default function ChatWorkspace() {
             </div>
           )}
           <form
-            className={`composer ${busy ? "is-busy" : ""}`}
+            className="composer"
             onSubmit={(event) => void sendMessage(event)}
             onDragOver={(event) => event.preventDefault()}
             onDrop={(event) => {
@@ -1157,6 +1197,12 @@ export default function ChatWorkspace() {
                 </span>
               </div>
               <div className="send-options">
+                <span
+                  className={`char-count ${draft.length > 15000 ? "near-limit" : ""}`}
+                  aria-live="off"
+                >
+                  {draft.length.toLocaleString("en-US")} / 16,000
+                </span>
                 <span className="enter-hint">
                   {busy ? "Working on it" : "Enter to send"}
                 </span>
@@ -1207,14 +1253,19 @@ export default function ChatWorkspace() {
             aria-label="Search conversations"
             placeholder="Search your conversations…"
             value={search}
-            onChange={(event) => {
-              const next = event.target.value;
-              setSearch(next);
-              if (!next.trim()) setServerResults(null);
-            }}
+            onChange={(event) => setSearch(event.target.value)}
           />
           <kbd>ESC</kbd>
         </div>
+        {search.trim() && currentSearch?.failed && (
+          <div className="search-feedback" role="status">
+            <span>Full-text search is unavailable. Showing title matches only.</span>
+            <button type="button" onClick={() => {
+              setServerSearch(null);
+              setSearchAttempt((attempt) => attempt + 1);
+            }}>Retry search</button>
+          </div>
+        )}
         <div className="search-results">
           {searchMatches.length ? (
             searchMatches.map((item) => (
@@ -1361,6 +1412,10 @@ export default function ChatWorkspace() {
             <option value={4096}>4,096 — everyday conversations</option>
             <option value={8192}>8,192 — more room to explore</option>
             <option value={16384}>16,384 — the full picture</option>
+            <option value={32768}>32,768 — extended</option>
+            <option value={65536}>65,536 — long-form</option>
+            <option value={131072}>131,072 — extra-long</option>
+            <option value={256000}>256,000 — maximum</option>
           </select>
           <p className="field-note">
             Includes thinking and answer tokens. Deep think works best with a
@@ -1559,16 +1614,6 @@ export default function ChatWorkspace() {
           </button>
         </div>
       </Modal>
-      {lightbox && (
-        <ImageLightbox
-          src={lightbox.src}
-          alt={lightbox.alt}
-          open
-          onOpenChange={(open) => {
-            if (!open) setLightbox(undefined);
-          }}
-        />
-      )}
       {toast && (
         <div className="toast" role="status">
           <Check size={16} />
@@ -1580,6 +1625,16 @@ export default function ChatWorkspace() {
             <X size={14} />
           </button>
         </div>
+      )}
+      {lightbox && (
+        <ImageLightbox
+          src={lightbox.src}
+          alt={lightbox.alt}
+          open={Boolean(lightbox)}
+          onOpenChange={(open) => {
+            if (!open) setLightbox(undefined);
+          }}
+        />
       )}
       <div className="sr-only" role="status" aria-live="polite">
         {busy

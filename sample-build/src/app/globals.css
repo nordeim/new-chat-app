@@ -160,6 +160,9 @@ kbd {
 .collapse-button {
   color: #8b9388;
 }
+.sidebar-close {
+  display: none;
+}
 .new-chat {
   width: 100%;
   display: flex;
@@ -992,33 +995,13 @@ kbd {
 .markdown li {
   margin-bottom: 5px;
 }
-.code-block {
-  position: relative;
-  margin: 16px 0;
-}
-.code-copy {
-  position: absolute;
-  top: 8px;
-  right: 8px;
-  z-index: 1;
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  border: 1px solid #d5e0c8;
-  background: #f7faf3;
-  color: #4d6442;
-  border-radius: 6px;
-  padding: 4px 8px;
-  font-size: 10px;
-  font-weight: 600;
-}
 .markdown pre {
   background: #f1f4ed;
   border: 1px solid #e0e7d8;
   padding: 17px;
   border-radius: 9px;
   overflow-x: auto;
-  margin: 0;
+  margin: 16px 0;
   font-size: 12px;
   line-height: 1.7;
 }
@@ -1098,18 +1081,6 @@ kbd {
   border-radius: 10px;
   margin: 5px 0 15px;
   border: 1px solid var(--line);
-}
-.message-image-button {
-  display: block;
-  padding: 0;
-  text-align: left;
-  border-radius: 10px;
-}
-.message-image-button:hover .message-image {
-  box-shadow: 0 0 0 2px #c5d6b8;
-}
-.message-image-button .message-image {
-  display: block;
 }
 .thinking-indicator {
   display: flex;
@@ -1628,7 +1599,9 @@ kbd {
   bottom: 24px;
   left: 50%;
   transform: translateX(-50%);
-  z-index: 80;
+  /* Above the lightbox (90/91): a toast fired just before opening the
+     preview must stay visible. Still below the skip link (100). */
+  z-index: 95;
   background: #384a2f;
   color: #f2f5ed;
   padding: 13px 15px;
@@ -2083,6 +2056,12 @@ kbd {
     transform: translateX(0);
     visibility: visible;
   }
+  .sidebar.mobile-open .sidebar-close {
+    display: inline-flex;
+  }
+  .sidebar.mobile-open .collapse-button {
+    display: none;
+  }
   .mobile-scrim {
     display: block;
     position: fixed;
@@ -2376,29 +2355,55 @@ kbd {
     height: 65px;
   }
 }
-.skip-link {
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* ── Code blocks (markdown-message) ─────────────────────────────── */
+.code-block {
+  position: relative;
+  margin: 16px 0;
+}
+.markdown .code-block pre {
+  margin: 0;
+}
+.code-copy {
   position: absolute;
-  left: 12px;
-  top: -48px;
-  z-index: 100;
-  background: var(--green);
-  color: #fff;
-  padding: 8px 12px;
-  border-radius: 8px;
-  font-size: 12px;
+  top: 8px;
+  right: 8px;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid #d5e0c8;
+  background: #f7faf3;
+  color: #4d6442;
+  border-radius: 6px;
+  padding: 4px 8px;
+  font-size: 10px;
   font-weight: 600;
+  cursor: pointer;
 }
-.skip-link:focus {
-  top: 12px;
+
+/* ── Clickable message images / lightbox ────────────────────────── */
+.message-image-button {
+  display: block;
+  padding: 0;
+  text-align: left;
+  border-radius: 10px;
+  cursor: pointer;
 }
-.char-count {
-  font-size: 9px;
-  color: #8a9483;
-  letter-spacing: 0.2px;
+.message-image-button:hover .message-image {
+  box-shadow: 0 0 0 2px #c5d6b8;
 }
-.char-count.near-limit {
-  color: #8a5a32;
-  font-weight: 600;
+.message-image-button .message-image {
+  display: block;
 }
 .lightbox-overlay {
   position: fixed;
@@ -2435,6 +2440,34 @@ kbd {
   background: #f4f7f0;
   color: var(--ink);
 }
+
+/* ── Skip link & composer character count ───────────────────────── */
+.skip-link {
+  position: absolute;
+  left: 12px;
+  top: -48px;
+  z-index: 100;
+  background: var(--green);
+  color: #fff;
+  padding: 8px 12px;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 600;
+}
+.skip-link:focus {
+  top: 12px;
+}
+.char-count {
+  font-size: 9px;
+  color: var(--muted);
+  letter-spacing: 0.2px;
+}
+.char-count.near-limit {
+  color: #8a5a32;
+  font-weight: 600;
+}
+
+/* ── Syntax highlighting (highlight.js, mint palette) ──────────── */
 .hljs-comment,
 .hljs-quote {
   color: #6d7a64;
@@ -2476,13 +2509,4 @@ kbd {
 .hljs-link,
 .hljs-params {
   color: #3e5a48;
-}
-@media (prefers-reduced-motion: reduce) {
-  *,
-  *::before,
-  *::after {
-    animation: none !important;
-    transition: none !important;
-    scroll-behavior: auto !important;
-  }
 }

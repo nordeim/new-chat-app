@@ -32,6 +32,7 @@ export function groupConversationsByPeriod(
 
   for (const item of items) {
     const updated = new Date(item.updatedAt);
+    // Unparseable timestamps stay visible at the top rather than vanishing.
     if (Number.isNaN(updated.getTime()) || updated >= today)
       buckets.Today.push(item);
     else if (updated >= yesterday) buckets.Yesterday.push(item);

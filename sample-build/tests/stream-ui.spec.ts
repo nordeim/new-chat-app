@@ -197,7 +197,9 @@ test("database outage shows specific recovery copy", async ({ page }) => {
     }),
   );
   await page.goto(base);
-  await expect(page.getByRole("alert")).toContainText(
+  // Scoped to the app banner: Next.js's global route announcer also has
+  // role="alert" and would otherwise win the locator.
+  await expect(page.locator(".error-banner")).toContainText(
     "cannot reach its database",
   );
 });
@@ -278,18 +280,112 @@ test("attached images open in a lightbox", async ({ page }) => {
     }),
   );
   await page.goto(base);
-  await page.getByLabel("Upload image", { exact: true }).setInputFiles({
-    name: "one-pixel.png",
-    mimeType: "image/png",
-    buffer: Buffer.from(
-      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=",
-      "base64",
-    ),
-  });
+  await page
+    .getByLabel("Upload image", { exact: true })
+    .setInputFiles({
+      name: "one-pixel.png",
+      mimeType: "image/png",
+      buffer: Buffer.from(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=",
+        "base64",
+      ),
+    });
   await page.getByRole("button", { name: "Send message" }).click();
-  await expect(page.getByAltText("Image attached to your message")).toBeVisible();
+  await expect(
+    page.getByAltText("Image attached to your message"),
+  ).toBeVisible();
   await page.getByAltText("Image attached to your message").click();
-  await expect(page.getByRole("dialog", { name: /Image attached/ })).toBeVisible();
+  await expect(
+    page.getByRole("dialog", { name: /Image attached/ }),
+  ).toBeVisible();
   await page.getByRole("button", { name: "Close image preview" }).click();
-  await expect(page.getByRole("dialog", { name: /Image attached/ })).toHaveCount(0);
+  await expect(
+    page.getByRole("dialog", { name: /Image attached/ }),
+  ).toHaveCount(0);
+});
+
+test("malformed stream events render curated copy, not raw parse errors", async ({
+  page,
+}) => {
+  await page.route("**/api/conversations", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ conversations: [], configured: true }),
+    }),
+  );
+  // A degraded proxy/server can emit frames that are complete but not JSON.
+  await page.route("**/api/chat", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "text/event-stream",
+      body: "data: {broken\n\n",
+    }),
+  );
+  await page.goto(base);
+  await page
+    .getByRole("textbox", { name: "Message Kimi" })
+    .fill("Trigger a malformed frame");
+  await page.getByRole("button", { name: "Send message" }).click();
+  const banner = page.locator(".error-banner");
+  await expect(banner).toContainText(
+    "The response stream was interrupted. Please try again.",
+  );
+  const text = await banner.innerText();
+  expect(text).not.toMatch(/unexpected token|JSON|issues|\{/i);
+});
+
+test("stop button aborts the stream and restores the draft", async ({ page }) => {
+  await page.route("**/api/conversations", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ conversations: [], configured: true }),
+    }),
+  );
+  await page.route("**/api/chat", async (route) => {
+    // Hold the request open without ever answering: the send is in-flight
+    // until the user presses stop, which aborts the fetch client-side.
+    await new Promise(() => {});
+  });
+  await page.goto(base);
+  await page
+    .getByRole("textbox", { name: "Message Kimi" })
+    .fill("Count to one hundred");
+  await page.getByRole("button", { name: "Send message" }).click();
+  await expect(
+    page.getByRole("button", { name: "Stop response" }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Stop response" }).click();
+  await expect(page.locator(".error-banner")).toContainText(
+    "Response stopped. You can try again when you’re ready.",
+  );
+  await expect(
+    page.getByRole("textbox", { name: "Message Kimi" }),
+  ).toBeEnabled();
+  await expect(
+    page.getByRole("textbox", { name: "Message Kimi" }),
+  ).toHaveValue("Count to one hundred");
+  await expect(page.locator(".message.assistant")).toHaveCount(0);
+});
+
+test("oversized images are rejected client-side with actionable copy", async ({
+  page,
+}) => {
+  await page.route("**/api/conversations", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ conversations: [], configured: true }),
+    }),
+  );
+  await page.goto(base);
+  await page.getByLabel("Upload image", { exact: true }).setInputFiles({
+    name: "too-big.png",
+    mimeType: "image/png",
+    buffer: Buffer.alloc(2 * 1024 * 1024 + 1, 137),
+  });
+  await expect(page.locator(".error-banner")).toContainText(
+    "Choose a PNG, JPEG, or WebP image up to 2 MB.",
+  );
 });

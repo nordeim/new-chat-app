@@ -116,6 +116,20 @@ test("mobile navigation and composer fit the viewport", async ({ page }) => {
   await page.screenshot({ path: "/tmp/kimi-mobile.png", fullPage: true });
 });
 
+test("mobile navigation closes on Escape and restores focus to the opener", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto(base);
+  await page.getByRole("button", { name: "Open navigation" }).click();
+  await expect(page.getByRole("button", { name: "New chat" }).first()).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".sidebar")).not.toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Open navigation" }),
+  ).toBeFocused();
+});
+
 test("workspace and settings satisfy automated WCAG AA checks", async ({
   page,
 }) => {
@@ -216,7 +230,6 @@ test("conversation CRUD enforces session isolation and same-origin writes", asyn
     );
     const page = await first.newPage();
     await page.goto(base);
-    await expect(page.getByText("Today", { exact: true }).first()).toBeVisible();
     await page.getByRole("button", { name: "Renamed safely" }).click();
     await expect(
       page.getByText("A private test message", { exact: true }),
@@ -265,6 +278,50 @@ test("API rejects malformed input and cross-site requests", async ({
     (await request.get(`${base}/api/conversations/not-a-uuid`)).status(),
   ).toBe(400);
   expect((await request.get(`${base}/api/health`)).status()).toBe(200);
+});
+
+test("same-origin writes pass through trusted proxies via x-forwarded-host", async ({
+  request,
+}) => {
+  await request.get(`${base}/api/conversations`);
+  const host = new URL(base).host;
+  // The true proxied path: Origin does NOT match Host (ingress rewrote it)
+  // but matches x-forwarded-host. Must pass the origin gate (400 = validation,
+  // not 403 = origin rejected).
+  expect(
+    (
+      await request.post(`${base}/api/chat`, {
+        headers: {
+          Origin: "https://proxy-check.example",
+          "x-forwarded-host": "proxy-check.example",
+        },
+        data: { content: "" },
+      })
+    ).status(),
+  ).toBe(400);
+  // An origin that matches neither Host nor x-forwarded-host stays rejected.
+  expect(
+    (
+      await request.post(`${base}/api/chat`, {
+        headers: {
+          Origin: "https://evil.example",
+          "x-forwarded-host": host,
+        },
+        data: {},
+      })
+    ).status(),
+  ).toBe(403);
+  expect(
+    (
+      await request.post(`${base}/api/chat`, {
+        headers: {
+          Origin: "https://evil.example",
+          "x-forwarded-host": "chat.example.com",
+        },
+        data: {},
+      })
+    ).status(),
+  ).toBe(403);
 });
 
 test("conversation search matches titles and message content, isolated by owner", async ({

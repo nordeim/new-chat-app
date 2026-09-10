@@ -4,6 +4,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { eq } from "drizzle-orm";
 import { db } from "@/db";
 import { sessions } from "@/db/schema";
+import { isSameOriginRequest } from "@/lib/origin";
+import { abortErrorLog, streamAbortKind } from "@/lib/stream-abort";
 
 const cookieName = "kimi_session";
 export class ApiError extends Error {
@@ -55,13 +57,14 @@ export function setSession(
 }
 
 export function assertOrigin(req: NextRequest) {
-  const origin = req.headers.get("origin");
+  const headers = req.headers;
   if (
-    !origin ||
-    !URL.canParse(origin) ||
-    !["http:", "https:"].includes(new URL(origin).protocol) ||
-    new URL(origin).host !== req.headers.get("host") ||
-    req.headers.get("sec-fetch-site") === "cross-site"
+    !isSameOriginRequest(
+      headers.get("origin"),
+      headers.get("host"),
+      headers.get("x-forwarded-host"),
+      headers.get("sec-fetch-site"),
+    )
   ) {
     throw new ApiError(
       403,
@@ -89,7 +92,7 @@ export async function readJson(
         await reader.cancel();
         throw new ApiError(
           413,
-          "The attachment is too large. Use an image under 2 MB.",
+          "The attachment is too large. Use an image up to 2 MB.",
         );
       }
       chunks.push(value);
@@ -111,13 +114,24 @@ export function errorResponse(error: unknown, operation: string) {
       { status: error.status },
     );
   const requestId = crypto.randomUUID();
-  console.error(
-    JSON.stringify({
-      operation,
-      requestId,
-      errorType: error instanceof Error ? error.name : "UnknownError",
-    }),
-  );
+  const errorType = error instanceof Error ? error.name : "UnknownError";
+  const abortBy = streamAbortKind(error);
+  if (abortBy) {
+    // The client went away before the action finished (e.g. a disconnect while
+    // an attachment body was still uploading). Expected teardown, not a
+    // server failure — warn keeps it separable from genuine errors.
+    console.warn(
+      abortErrorLog({ operation, requestId, abortBy, errorType }).line,
+    );
+  } else {
+    console.error(
+      JSON.stringify({
+        operation,
+        requestId,
+        errorType,
+      }),
+    );
+  }
   return NextResponse.json(
     {
       error: "The workspace could not complete this action. Please try again.",

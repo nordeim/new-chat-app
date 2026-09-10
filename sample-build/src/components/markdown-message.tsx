@@ -1,6 +1,6 @@
 "use client";
 
-import { useDeferredValue, useState } from "react";
+import { memo, useDeferredValue, useState } from "react";
 import Markdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
@@ -40,7 +40,9 @@ function CodeBlock({
   );
 }
 
-export function MarkdownMessage({
+// Memoized: props are primitives, so completed messages skip the remark +
+// rehype-highlight re-parse on every streaming render of the parent.
+export const MarkdownMessage = memo(function MarkdownMessage({
   content,
   streaming = false,
 }: {
@@ -70,4 +72,4 @@ export function MarkdownMessage({
       </Markdown>
     </div>
   );
-}
+});

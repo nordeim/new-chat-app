@@ -11,10 +11,15 @@ import {
 } from "@/lib/server";
 import { chatInputSchema, providerChunkSchema } from "@/lib/validation";
 import { SSEParser } from "@/lib/sse";
+import {
+  streamAbortKind,
+  streamAbortLog,
+  streamErrorLog,
+} from "@/lib/stream-abort";
 import type { ChatMessage } from "@/lib/types";
 
 export const runtime = "nodejs";
-export const maxDuration = 180;
+export const maxDuration = 600;
 
 export async function POST(req: NextRequest) {
   let owner: string | undefined;
@@ -57,11 +62,13 @@ export async function POST(req: NextRequest) {
       if (!valid || bytes.length > 2 * 1024 * 1024)
         throw new ApiError(
           400,
-          "Use a valid PNG, JPEG, or WebP image under 2 MB.",
+          "Use a valid PNG, JPEG, or WebP image up to 2 MB.",
         );
     }
     const now = new Date();
-    const proposedLease = new Date(now.getTime() + 195_000);
+    const isLongOutput = input.settings.maxTokens > 16384;
+    const leaseMs = isLongOutput ? 615_000 : 195_000;
+    const proposedLease = new Date(now.getTime() + leaseMs);
     const [claimed] = await db
       .update(sessions)
       .set({ busyUntil: proposedLease, lastRequest: now })
@@ -103,7 +110,7 @@ export async function POST(req: NextRequest) {
         );
       if (
         conversation.messages.length >= 60 ||
-        JSON.stringify(conversation.messages).length > 8_000_000
+        JSON.stringify(conversation.messages).length > 16_000_000
       )
         throw new ApiError(
           400,
@@ -142,10 +149,11 @@ export async function POST(req: NextRequest) {
     }
     const saved = conversation;
     const aborter = new AbortController();
+    const timeoutMs = isLongOutput ? 590_000 : 175_000;
     const signal = AbortSignal.any([
       aborter.signal,
       req.signal,
-      AbortSignal.timeout(175_000),
+      AbortSignal.timeout(timeoutMs),
     ]);
     const encoder = new TextEncoder();
     const stream = new ReadableStream<Uint8Array>({
@@ -255,7 +263,7 @@ export async function POST(req: NextRequest) {
               }
               if (
                 assistant.content.length + (assistant.reasoning?.length ?? 0) >
-                600_000
+                1_200_000
               )
                 throw new Error("Response size limit exceeded");
             }
@@ -282,6 +290,11 @@ export async function POST(req: NextRequest) {
           if (truncated)
             assistant.content +=
               "\n\n*Response reached the output limit. Ask me to continue.*";
+          // The 60-message / 16 MB caps were enforced on the user turn above;
+          // the completed answer may push the stored array to 61 messages.
+          // The lease serializes same-session sends, so the soft drift is at
+          // most one message — persisting the finished answer beats dropping
+          // it after the spend already happened.
           await db
             .update(conversations)
             .set({
@@ -298,22 +311,45 @@ export async function POST(req: NextRequest) {
             },
           });
         } catch (error) {
-          console.error(
-            JSON.stringify({
-              operation: "chat.stream",
-              conversationId: saved.id,
-              errorType: error instanceof Error ? error.name : "UnknownError",
-            }),
-          );
-          send({
-            type: "error",
-            message:
-              error instanceof ApiError
-                ? error.message
-                : signal.aborted
-                  ? "The response was stopped or timed out. Your message is saved; you can try again."
-                  : "The response was interrupted. Your message is saved; please try again.",
-          });
+          const abortBy = streamAbortKind(error);
+          if (abortBy) {
+            // Expected teardown: the browser went away mid-stream (Stop,
+            // refresh, tab close, navigation). Next.js aborts request.signal
+            // with a named ResponseAborted error; an internal race can surface
+            // the same disconnect as a default AbortError instead. Warn level
+            // keeps these separable from genuine failures. partialChars is a
+            // length, not content, and records how much was discarded.
+            console.warn(
+              streamAbortLog({
+                operation: "chat.stream",
+                conversationId: saved.id,
+                abortBy,
+                partialChars: assistant.content.length,
+              }).line,
+            );
+          } else {
+            console.error(
+              streamErrorLog({
+                operation: "chat.stream",
+                conversationId: saved.id,
+                errorType: error instanceof Error ? error.name : "UnknownError",
+              }).line,
+            );
+          }
+          try {
+            send({
+              type: "error",
+              message:
+                error instanceof ApiError
+                  ? error.message
+                  : signal.aborted
+                    ? "The response was stopped or timed out. Your message is saved; you can try again."
+                    : "The response was interrupted. Your message is saved; please try again.",
+            });
+          } catch {
+            // The controller is already closed or errored (client teardown
+            // without cancel()); the lease release below still runs.
+          }
         } finally {
           try {
             await release();
