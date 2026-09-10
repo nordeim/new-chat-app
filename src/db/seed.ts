@@ -9,10 +9,10 @@ export interface SeedResult {
   inserted: number;
 }
 
-// Idempotent local-dev seed: verifies extensions, then inserts a single
+// Idempotent local-dev seed: preflights connectivity, then inserts a single
 // demo workspace only if the database is otherwise empty. Safe to re-run and
-// never overwrites existing user data. `pgcrypto` is already created by the
-// Docker entrypoint, but the check keeps bare-host setups honest.
+// never overwrites existing user data. `gen_random_uuid()` needs no extension
+// on PostgreSQL 13+, so no extension check is required here.
 export async function seed(
   db: Db,
   tables: { sessions: SessionsTable; conversations: ConversationsTable },

@@ -91,7 +91,7 @@ export async function readJson(
         await reader.cancel();
         throw new ApiError(
           413,
-          "The attachment is too large. Use an image under 2 MB.",
+          "The attachment is too large. Use an image up to 2 MB.",
         );
       }
       chunks.push(value);

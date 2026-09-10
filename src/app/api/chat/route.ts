@@ -57,7 +57,7 @@ export async function POST(req: NextRequest) {
       if (!valid || bytes.length > 2 * 1024 * 1024)
         throw new ApiError(
           400,
-          "Use a valid PNG, JPEG, or WebP image under 2 MB.",
+          "Use a valid PNG, JPEG, or WebP image up to 2 MB.",
         );
     }
     const now = new Date();
@@ -285,6 +285,11 @@ export async function POST(req: NextRequest) {
           if (truncated)
             assistant.content +=
               "\n\n*Response reached the output limit. Ask me to continue.*";
+          // The 60-message / 16 MB caps were enforced on the user turn above;
+          // the completed answer may push the stored array to 61 messages.
+          // The lease serializes same-session sends, so the soft drift is at
+          // most one message — persisting the finished answer beats dropping
+          // it after the spend already happened.
           await db
             .update(conversations)
             .set({
@@ -308,15 +313,20 @@ export async function POST(req: NextRequest) {
               errorType: error instanceof Error ? error.name : "UnknownError",
             }),
           );
-          send({
-            type: "error",
-            message:
-              error instanceof ApiError
-                ? error.message
-                : signal.aborted
-                  ? "The response was stopped or timed out. Your message is saved; you can try again."
-                  : "The response was interrupted. Your message is saved; please try again.",
-          });
+          try {
+            send({
+              type: "error",
+              message:
+                error instanceof ApiError
+                  ? error.message
+                  : signal.aborted
+                    ? "The response was stopped or timed out. Your message is saved; you can try again."
+                    : "The response was interrupted. Your message is saved; please try again.",
+            });
+          } catch {
+            // The controller is already closed or errored (client teardown
+            // without cancel()); the lease release below still runs.
+          }
         } finally {
           try {
             await release();

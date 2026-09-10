@@ -5,7 +5,7 @@ export const imageSchema = z
   .max(2_800_000)
   .regex(
     /^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/]+={0,2}$/,
-    "Use a PNG, JPEG, or WebP image under 2 MB.",
+    "Use a PNG, JPEG, or WebP image up to 2 MB.",
   );
 export const chatInputSchema = z
   .object({
