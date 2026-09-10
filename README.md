@@ -16,11 +16,12 @@ Kimi Workspace solves a common problem: most chat starters stop at a single hard
 | ✨ | Feature | Description |
 |----|---------|-------------|
 | 🌊 | Streamed responses | Token-by-token SSE from NVIDIA NIM with a thinking indicator, stop control, and truncation notice |
-| 💾 | Saved conversations | Postgres-backed history with search (⌘K), rename, delete, and Markdown export |
+| 💾 | Saved conversations | Postgres-backed history with search across titles **and message content** (⌘K), rename, delete, and Markdown export |
 | 🖼️ | Image-aware composer | PNG/JPEG/WebP attachments under 2 MB, validated client-side and re-verified by magic bytes server-side |
 | 🎛️ | Model settings | Temperature, output-token limit, and reasoning-effort controls per message |
 | 🔒 | Session isolation | HTTP-only, SameSite=Strict cookie; only its SHA-256 digest is stored as the database owner |
 | 🛡️ | Hardened API | Same-origin writes, bounded bodies, zod-validated payloads, atomic one-generation-per-session lease |
+| 🧹 | Retention CLI | `npm run prune` removes idle sessions (cascade) and optionally stale conversations, with a structured log line |
 | ♿ | Accessible UI | WCAG 2.2 AA verified with automated axe checks, keyboard operable, visible focus states |
 
 ## Architecture
@@ -102,6 +103,7 @@ Requirements: **Node.js ≥ 22** and a **PostgreSQL** database.
 | `DATABASE_URL` | ✅ | PostgreSQL connection string, e.g. `postgresql://user:pass@host:5432/db` |
 | `NVIDIA_API_KEY` | For chat | Server-only key from [build.nvidia.com](https://build.nvidia.com). Never use a `NEXT_PUBLIC_` variable |
 | `TEST_BASE_URL` | No | Playwright target origin (default `http://localhost:3000`) |
+| `LIVE_SITE_URL` | No | Target for the live-deployment E2E suite (skipped when unset) |
 
 ## NVIDIA contract
 
@@ -120,7 +122,7 @@ References: [NVIDIA model page](https://build.nvidia.com/moonshotai/kimi-k3) · 
 | Endpoint | Method | Auth | Description |
 |----------|--------|------|-------------|
 | `/api/chat` | POST | Session cookie + same-origin | SSE stream: `meta`, `thinking`, `delta`, `done`, `error` events |
-| `/api/conversations` | GET | Session cookie (sets one) | List up to 100 conversations + `configured` flag |
+| `/api/conversations` | GET | Session cookie (sets one) | List up to 100 conversations + `configured` flag; optional `?q=` filters server-side by title and message content (case-insensitive, owner-isolated) |
 | `/api/conversations/[id]` | GET | Session cookie | Full conversation with messages (reasoning stripped) |
 | `/api/conversations/[id]` | PATCH | Session cookie + same-origin | Rename (1–100 characters) |
 | `/api/conversations/[id]` | DELETE | Session cookie + same-origin | Delete; refuses (409) while a response is streaming |
@@ -140,7 +142,7 @@ Limits: 100 conversations per workspace, 60 persisted messages per conversation,
 
 - Add organizational authentication/SSO with durable user ownership, account recovery, and role-based authorization.
 - Add ingress-level IP/account rate limiting, global provider-spend quotas, and abuse prevention. Browser-session limits can be bypassed by creating fresh sessions and are not a public-service billing defense.
-- Define a retention schedule and periodically delete expired sessions/conversations with a reviewed Drizzle job. Cookie expiry alone does not delete database data.
+- Add a retention schedule and run `npm run prune -- --idle-days 30 [--conversation-days 90]` periodically (e.g. weekly cron); it deletes idle sessions with their conversations and logs a structured summary. Cookie expiry alone does not delete database data.
 - Configure backups, least-privilege database credentials, TLS, encryption at rest, operational monitoring, incident response, and secret rotation.
 - Add idempotency tokens if transparent network retry of new conversations is required.
 - Validate actual model availability, streaming behavior, image inference, cancellation, long responses, and multi-turn reasoning with your NVIDIA account.
@@ -153,24 +155,28 @@ Limits: 100 conversations per workspace, 60 persisted messages per conversation,
 npm test                                   # unit: schemas + SSE parser (node:test)
 npm run build && npm start                 # required for E2E
 npm run test:e2e                           # Playwright: UI, API isolation, WCAG
+LIVE_SITE_URL=https://your-deployment.example npx playwright test tests/live-site.spec.ts
 npm audit --omit=dev                       # production dependency audit
 ```
 
-E2E prerequisites: a disposable test `DATABASE_URL` (fixtures are inserted and cleaned up), **no** `NVIDIA_API_KEY` (the missing-key UX is part of the spec), and `TEST_BASE_URL` for non-default origins. The streamed-answer tests use explicit transport fixtures; the GFM-table test additionally routes both API endpoints, so it runs without a database.
+E2E prerequisites: a disposable test `DATABASE_URL` (fixtures are inserted and cleaned up), **no** `NVIDIA_API_KEY` (the missing-key UX is part of the spec), and `TEST_BASE_URL` for non-default origins. The streamed-answer tests use explicit transport fixtures; the GFM-table test additionally routes both API endpoints, so it runs without a database. `tests/live-site.spec.ts` is skipped entirely unless `LIVE_SITE_URL` is set and exercises a real deployment (read-only except one minimal chat send when the provider is configured).
 
 `GET /api/health` checks PostgreSQL connectivity; it does not call the provider or validate its credential.
 
 ## Project status & recent changes
 
-Latest verification (2026-09-10): typecheck, lint, build, 5/5 unit tests, 9/9 Playwright tests (including axe WCAG 2.2 AA and session-isolation suites), and a clean production dependency audit. Full evidence and the severity-ranked finding list live in [`docs/CODE_REVIEW_REPORT.md`](docs/CODE_REVIEW_REPORT.md).
+Latest verification (2026-09-10, audit pass 2): typecheck, lint, build, 5/5 unit tests, 14/14 Playwright tests locally (including error-state axe WCAG 2.2 AA, server-side search, and retention suites), Lighthouse 90/100/96, and a clean production dependency audit. Full evidence and the severity-ranked finding list live in [`docs/CODE_REVIEW_REPORT.md`](docs/CODE_REVIEW_REPORT.md).
 
 | Change | Notes |
 |--------|-------|
+| Accessibility in error states | Error-banner contrast raised to 4.5:1+ and the WCAG suite now scans the error state (was welcome/dialog only) |
+| Robust degraded-API UX | Non-JSON or contract-breaking API responses show curated copy instead of raw parse errors |
+| Server-side search | `GET /api/conversations?q=` matches titles and message content, owner-isolated; ⌘K dialog queries it with a 250 ms debounce |
+| Retention CLI | `npm run prune` deletes idle sessions (cascade) and optionally stale conversations; integration-tested |
+| Live-deployment E2E | `tests/live-site.spec.ts` (env-gated via `LIVE_SITE_URL`) validates a deployed instance end to end |
+| CI | `.github/workflows/ci.yml` runs typecheck → lint → unit → build, plus E2E against a PostgreSQL service container |
+| HSTS | `Strict-Transport-Security: max-age=63072000; includeSubDomains` added app-side (enforced by TLS ingress) |
 | Security remediation | Removed a committed SSH private key from `docs/`; secret patterns ignored. **The exposed key must still be rotated by the operator** — removal does not unpublish git history |
-| Build-gate repair | `skills/`, `sample-build/`, `docs/` excluded from `tsc` and ESLint; `next typegen` folded into `npm run typecheck` |
-| Markdown polish | GitHub-Flavored Markdown (tables, task lists, strikethrough) renders in streamed answers |
-| Test tooling | `playwright.config.ts`, `npm test`, `npm run test:e2e`, `.env.example`, MIT `LICENSE` |
-| API hardening | Rename endpoint now sets `Cache-Control: no-store` like all other data responses |
 
 ## Design system
 
@@ -191,6 +197,7 @@ Latest verification (2026-09-10): typecheck, lint, build, 5/5 unit tests, 9/9 Pl
 | Issue | Solution |
 |-------|----------|
 | App fails to start: `DATABASE_URL is required` | Set `DATABASE_URL` in `.env` or the server environment, then restart |
+| `/api/health` returns `{"ok":false}` (HTTP 500) while the page still loads | The app cannot reach PostgreSQL. Check that the database behind `DATABASE_URL` is running, reachable from the server, and accepts the configured credentials; restart the app after fixing. The UI renders but sessions/conversations fail until this is green |
 | “Connect NVIDIA…” banner on send | Add `NVIDIA_API_KEY` to the **server** environment and restart; the UI works without it |
 | 429 “A response is already running” | One generation per session is enforced; wait a moment and retry |
 | Playwright tests fail to connect | Start the production preview (`npm run build && npm start`) and set `TEST_BASE_URL` if non-default |
