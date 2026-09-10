@@ -4,6 +4,8 @@
 
 Pass 2 (same file) remediated the pass-1 findings and left two operator items open. This pass began from a fresh clone, validated the documented state, ran browser E2E against the live deployment, then remediated what it found with red→green tests. All code remediations below landed in this pass's commits.
 
+> **Addendum 2026-09-10 (272d7ff):** Post-pass audit of `HEAD` (`eb654aa`) revealed `dc1c664`'s claim “`.env` untracked” never took effect — `git ls-tree` still showed `.env` tracked and `git grep` hit `nvapi-` in it. Remediated here by `git rm --cached .env` (file stays locally, `.gitignore` now effective); CI secret scan no longer hits `.env` in tracked files. Rotate the provider key — history still retains `7afe083` and this key. See `kimi-workspace-review-validation-plan.md` Live Validation Evidence.
+
 ---
 
 ## Summary
