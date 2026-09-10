@@ -184,6 +184,9 @@ function Modal({
   );
 }
 
+// Only curated application errors may be shown verbatim to the user.
+class WorkspaceRequestError extends Error {}
+
 async function apiJson(response: Response): Promise<unknown> {
   let data: unknown;
   try {
@@ -193,7 +196,7 @@ async function apiJson(response: Response): Promise<unknown> {
   }
   if (!response.ok) {
     const error = z.object({ error: z.string() }).safeParse(data);
-    throw new Error(
+    throw new WorkspaceRequestError(
       error.success
         ? error.data.error
         : "The request failed. Please try again.",
@@ -207,7 +210,7 @@ async function apiJson(response: Response): Promise<unknown> {
 function parseOrReload<T extends z.ZodTypeAny>(schema: T, data: unknown): z.infer<T> {
   const result = schema.safeParse(data);
   if (!result.success)
-    throw new Error("Could not load your workspace. Please reload.");
+    throw new WorkspaceRequestError("Could not load your workspace. Please reload.");
   return result.data;
 }
 
@@ -250,9 +253,12 @@ export default function ChatWorkspace() {
     "search" | "settings" | "help" | "model" | "rename" | "delete" | null
   >(null);
   const [search, setSearch] = useState("");
-  const [serverResults, setServerResults] = useState<
-    ConversationSummary[] | null
-  >(null);
+  const [serverSearch, setServerSearch] = useState<{
+    term: string;
+    items: ConversationSummary[];
+    failed: boolean;
+  } | null>(null);
+  const [searchAttempt, setSearchAttempt] = useState(0);
   const [rename, setRename] = useState("");
   const [mutationBusy, setMutationBusy] = useState(false);
   const [copied, setCopied] = useState<string>();
@@ -265,9 +271,12 @@ export default function ChatWorkspace() {
   const current = history.find((item) => item.id === currentId);
   const groupedHistory = groupConversationsByPeriod(history);
   const filteredHistory = history.filter((item) =>
-    item.title.toLowerCase().includes(search.toLowerCase()),
+    item.title.toLowerCase().includes(search.trim().toLowerCase()),
   );
-  const searchMatches = serverResults ?? filteredHistory;
+  // A result belongs to its query, never to the input that happens to be
+  // visible when it arrives. Failures explicitly fall back to local titles.
+  const currentSearch = serverSearch?.term === search.trim() ? serverSearch : null;
+  const searchMatches = currentSearch && !currentSearch.failed ? currentSearch.items : filteredHistory;
 
   // Loads (or reloads) the workspace. Returns a dispose function so effects can
   // ignore stale responses; state updates happen only in async callbacks.
@@ -306,41 +315,39 @@ export default function ChatWorkspace() {
   useEffect(() => refresh(), [refresh]);
 
   // Non-empty search terms query the server (titles + message content).
-  // While a request is in flight the previous result set stays visible; if a
-  // search request fails, the modal degrades to local title filtering rather
-  // than showing a dead end for a type-ahead picker.
+  // Results are bound to the term that requested them: a slow or failed
+  // response can never present another query's results as its own. Failures
+  // degrade to local title filtering behind an explicit, retryable notice.
   useEffect(() => {
     const term = search.trim();
-    if (!term) {
-      // Defer to avoid react-hooks/set-state-in-effect (no cascading sync render).
-      queueMicrotask(() => setServerResults(null));
-      return;
-    }
+    if (!term) return;
     const controller = new AbortController();
     const timer = setTimeout(() => {
       fetch(`/api/conversations?q=${encodeURIComponent(term)}`, {
         cache: "no-store",
         signal: controller.signal,
       })
-        .then(async (response) =>
-          response.ok ? apiJson(response) : Promise.reject(response.status),
-        )
-        .then((data: unknown) => {
-          if (controller.signal.aborted) return;
-          const parsed = z
-            .object({ conversations: z.array(summarySchema) })
-            .safeParse(data);
-          if (parsed.success) setServerResults(parsed.data.conversations);
+        .then(async (response) => {
+          const data = await apiJson(response);
+          return parseOrReload(
+            z.object({ conversations: z.array(summarySchema) }),
+            data,
+          );
+        })
+        .then((data) => {
+          if (!controller.signal.aborted)
+            setServerSearch({ term, items: data.conversations, failed: false });
         })
         .catch(() => {
-          // Abort or network failure: keep local title results visible.
+          if (!controller.signal.aborted)
+            setServerSearch({ term, items: [], failed: true });
         });
     }, 250);
     return () => {
       controller.abort();
       clearTimeout(timer);
     };
-  }, [search]);
+  }, [search, searchAttempt]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "instant", block: "end" });
@@ -389,6 +396,8 @@ export default function ChatWorkspace() {
   async function openConversation(id: string) {
     if (busy) return;
     const opening = ++openingRef.current;
+    // Never send into the previous chat if this navigation fails.
+    setCurrentId(undefined);
     setLoadingChat(true);
     setMessages([]);
     setError("");
@@ -413,9 +422,9 @@ export default function ChatWorkspace() {
     } catch (err) {
       if (opening === openingRef.current)
         setError(
-          err instanceof Error
+          err instanceof WorkspaceRequestError
             ? err.message
-            : "Could not open this conversation.",
+            : "Could not open this conversation. Check your network and try again.",
         );
     } finally {
       if (opening === openingRef.current) setLoadingChat(false);
@@ -509,7 +518,7 @@ export default function ChatWorkspace() {
         return;
       }
       if (!response.body)
-        throw new Error("Streaming is unavailable. Please try again.");
+        throw new WorkspaceRequestError("Streaming is unavailable. Please try again.");
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       // A final answer can contain 1.2M characters. JSON escaping can expand
@@ -524,7 +533,7 @@ export default function ChatWorkspace() {
             // A degraded proxy/server can emit malformed frames. Same client
             // boundary as parseOrReload: raw parse/schema text never reaches
             // the banner. Server error events below carry their own copy.
-            throw new Error(
+            throw new WorkspaceRequestError(
               "The response stream was interrupted. Please try again.",
             );
           }
@@ -555,7 +564,7 @@ export default function ChatWorkspace() {
               ),
             );
           }
-          if (item.type === "error") throw new Error(item.message);
+          if (item.type === "error") throw new WorkspaceRequestError(item.message);
         }
       };
       try {
@@ -573,14 +582,14 @@ export default function ChatWorkspace() {
         reader.releaseLock();
       }
       if (!finished)
-        throw new Error("The connection ended early. Please try again.");
+        throw new WorkspaceRequestError("The connection ended early. Please try again.");
     } catch (err) {
       setError(
         aborter.signal.aborted
           ? "Response stopped. You can try again when you’re ready."
-          : err instanceof Error
+          : err instanceof WorkspaceRequestError
             ? err.message
-            : "Could not send your message. Please try again.",
+            : "The connection was interrupted. Check your network and try again.",
       );
       if (!accepted) {
         setMessages(previousMessages);
@@ -734,7 +743,11 @@ export default function ChatWorkspace() {
             <MoreHorizontal size={17} />
           </button>
         </div>
-        <nav className="conversation-list" aria-label="Saved conversations">
+        <nav
+          className="conversation-list"
+          aria-label="Saved conversations"
+          tabIndex={0}
+        >
           {history.length > 0 ? (
             groupedHistory.map((group) => (
               <div key={group.label}>
@@ -1251,6 +1264,15 @@ export default function ChatWorkspace() {
           />
           <kbd>ESC</kbd>
         </div>
+        {search.trim() && currentSearch?.failed && (
+          <div className="search-feedback" role="status">
+            <span>Full-text search is unavailable. Showing title matches only.</span>
+            <button type="button" onClick={() => {
+              setServerSearch(null);
+              setSearchAttempt((attempt) => attempt + 1);
+            }}>Retry search</button>
+          </div>
+        )}
         <div className="search-results">
           {searchMatches.length ? (
             searchMatches.map((item) => (
