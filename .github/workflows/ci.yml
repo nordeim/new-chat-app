@@ -18,10 +18,17 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      - name: Secret scan (fail on credential patterns in tracked files)
+        run: |
+          if git grep -lIE 'nvapi-[A-Za-z0-9_-]{20,}|-----BEGIN [A-Z ]*PRIVATE KEY-----|ghp_[A-Za-z0-9]{20,}|AKIA[0-9A-Z]{16}' -- . ':!package-lock.json'; then
+            echo "::error::Credential-like pattern found in tracked files"
+            exit 1
+          fi
       - run: npm run typecheck
       - run: npm run lint
       - run: npm test
       - run: npm run build
+      - run: npm audit --omit=dev && echo "production audit clean"
 
   e2e:
     runs-on: ubuntu-latest
