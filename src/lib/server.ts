@@ -4,6 +4,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { eq } from "drizzle-orm";
 import { db } from "@/db";
 import { sessions } from "@/db/schema";
+import { isSameOriginRequest } from "@/lib/origin";
 
 const cookieName = "kimi_session";
 export class ApiError extends Error {
@@ -55,13 +56,14 @@ export function setSession(
 }
 
 export function assertOrigin(req: NextRequest) {
-  const origin = req.headers.get("origin");
+  const headers = req.headers;
   if (
-    !origin ||
-    !URL.canParse(origin) ||
-    !["http:", "https:"].includes(new URL(origin).protocol) ||
-    new URL(origin).host !== req.headers.get("host") ||
-    req.headers.get("sec-fetch-site") === "cross-site"
+    !isSameOriginRequest(
+      headers.get("origin"),
+      headers.get("host"),
+      headers.get("x-forwarded-host"),
+      headers.get("sec-fetch-site"),
+    )
   ) {
     throw new ApiError(
       403,
