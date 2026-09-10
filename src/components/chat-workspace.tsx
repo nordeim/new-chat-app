@@ -52,6 +52,7 @@ import {
   type ConversationSummary,
 } from "@/lib/types";
 import { SSEParser } from "@/lib/sse";
+import NavigationFrame from "@/components/navigation-frame";
 
 const categories = [
   {
@@ -627,17 +628,11 @@ export default function ChatWorkspace() {
 
   return (
     <div className={`app-shell ${sidebarCollapsed ? "sidebar-collapsed" : ""}`}>
-      {mobileOpen && (
-        <button
-          className="mobile-scrim"
-          aria-label="Close navigation"
-          onClick={() => setMobileOpen(false)}
-        />
-      )}
-      <aside
-        className={`sidebar ${mobileOpen ? "mobile-open" : ""}`}
-        aria-label="Workspace navigation"
-      >
+      <NavigationFrame open={mobileOpen} onOpenChange={setMobileOpen}>
+        <aside
+          className={`sidebar ${mobileOpen ? "mobile-open" : ""}`}
+          aria-label="Workspace navigation"
+        >
         <div className="brand-row">
           <button className="brand" onClick={newChat} aria-label="Kimi home">
             <KimiMark />
@@ -645,6 +640,13 @@ export default function ChatWorkspace() {
               kimi<span className="brand-dot">.</span>
             </span>
             <span className="workspace-label">WORKSPACE</span>
+          </button>
+          <button
+            className="icon-button sidebar-close"
+            aria-label="Close navigation"
+            onClick={() => setMobileOpen(false)}
+          >
+            <X size={17} />
           </button>
           <button
             className="icon-button collapse-button"
@@ -754,7 +756,8 @@ export default function ChatWorkspace() {
         <div className="sidebar-footnote">
           <span className="tiny-dot" /> A little more possible.
         </div>
-      </aside>
+        </aside>
+      </NavigationFrame>
 
       <main className="main-panel">
         <header className="topbar">

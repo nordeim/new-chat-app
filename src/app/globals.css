@@ -160,6 +160,9 @@ kbd {
 .collapse-button {
   color: #8b9388;
 }
+.sidebar-close {
+  display: none;
+}
 .new-chat {
   width: 100%;
   display: flex;
@@ -2050,6 +2053,12 @@ kbd {
   .sidebar.mobile-open {
     transform: translateX(0);
     visibility: visible;
+  }
+  .sidebar.mobile-open .sidebar-close {
+    display: inline-flex;
+  }
+  .sidebar.mobile-open .collapse-button {
+    display: none;
   }
   .mobile-scrim {
     display: block;
