@@ -214,3 +214,40 @@ The application code is **shippable** after this pass's remediations, with one d
 2. Redeploy the production build so H2/M1/L-fixes take effect on the live site (verified locally and via the live suite against the **current** deployment; the fixes themselves ship with the next deploy).
 3. Ingress-level rate limiting before public exposure (see M3).
 4. Work the Informational test-coverage backlog as flakiness budget allows.
+
+---
+
+# Pass 5 — 2026-09-10 (ResponseAborted runtime-log investigation, abort taxonomy remediation)
+
+**Scope:** the `chat.stream` runtime log `{"operation":"…","errorType":"ResponseAborted"}` reported from a local production run (`PORT=3003 npm run start`); `src/lib/stream-abort.ts` (new), `src/app/api/chat/route.ts`, `src/lib/server.ts`, `tests/core.test.mjs`, docs. **Method:** the repo `diagnosing-bugs` skill loop (feedback harness → instrumentation → deterministic repro) followed by red→green remediation per the `tdd` skill.
+
+## Root cause (verified end-to-end, not an app defect)
+
+`ResponseAborted` is Next.js 16's named error for "the client disconnected before the response finished" (`next/dist/server/web/spec-extension/adapters/next-request.js`: on `ServerResponse 'close'` before `writableFinished`, both `request.signal` and the pipe signal are aborted with `new ResponseAborted()`). Verified propagation in a deterministic local repro (fake NVIDIA provider preload honoring the fetch-spec abort contract + curl mid-stream kill against the production build):
+
+1. Browser closes the SSE connection (Stop button, refresh, tab close, navigating to another chat, network drop).
+2. `request.signal` aborts with the `ResponseAborted` instance → the route's `AbortSignal.any([aborter, req.signal, timeout])` carries that reason to the upstream provider fetch.
+3. The pending upstream `reader.read()` rejects with the `ResponseAborted` instance → the route's catch logged it via `console.error` with the cryptic runtime name.
+
+Probes also showed the pipeline's cancel path (`pipeTo → source.cancel → route cancel() → aborter.abort()` with no reason) can win the race, surfacing the **same disconnect as `AbortError`**; the route's own deadline surfaces as `TimeoutError`; and a disconnect during a create-path body upload surfaces as Node's body-stream signature (`Error`/`"aborted"`/`ECONNRESET` — captured live). Post-abort invariants were verified in the database: the lease is released and partial assistant output is intentionally discarded (the retry-dedupe guard depends on it). The happy path logs nothing. **So the pipeline behaved correctly — the gap was observability: an expected, client-driven teardown was logged at error level under a runtime-specific name, indistinguishable from genuine failures.**
+
+## Findings & remediation
+
+| ID | Severity | Finding | Remediation |
+|----|----------|---------|-------------|
+| A1 | 🟡 Medium | Expected client disconnects logged at error level with runtime-specific names (`ResponseAborted`/`AbortError`), indistinguishable from genuine failures | `src/lib/stream-abort.ts`: `streamAbortKind(error)` → `"client-disconnect" \| "timeout" \| null` covering all four runtime signatures; route catch logs warn-level `{operation, conversationId, outcome:"aborted", abortBy, partialChars}`; genuine failures keep the established error-level shape |
+| A2 | 🟡 Medium | Same misclassification in the shared `errorResponse` funnel (e.g. disconnect while a 2 MB attachment body is uploading → error-level `errorType:"Error"` at `chat.create`) | `errorResponse` classifies via `streamAbortKind`; aborts log warn-level `{operation, requestId, outcome:"aborted", abortBy, errorType}`; HTTP behavior unchanged |
+| A3 | ⚪ Info | No documentation explained `ResponseAborted`, guaranteeing repeat investigations | CLAUDE.md abort-taxonomy rule, README troubleshooting row, AGENTS.md non-obvious rule, PAD Pattern 5 + directory annotations updated |
+
+**Deliberately unchanged (verified correct):** lease release on abort (DB-verified `busy_until` reset), upstream fetch cancellation via the composite signal (no wasted provider spend), partial-content discard (retry-dedupe contract), client-facing copy, silent happy path.
+
+## Verification ledger (pass 5)
+
+| Check | How | Result |
+|-------|-----|--------|
+| Deterministic repro (pre-fix) | fake-provider preload + `curl -m 1.2` mid-stream kill vs production build; `AbortController.abort`/`AbortSignal.any` instrumentation | ✅ reproduced the exact reported log line (`errorType:"ResponseAborted"`) and the racy `AbortError` alias |
+| Unit tests | `npm test` | ✅ 28/28 (6 new: classification table incl. Node body signature + pg-reset negative, log shapers' levels/shapes/no-content-leak) |
+| Type safety / lint / build | `npm run typecheck` → `npm run lint` → `npm run build` | ✅ pass |
+| Local E2E | Playwright vs production build on embedded PostgreSQL 18 | ✅ 24/24 (12 skipped live by design) |
+| Post-fix live verification | same repro harness, three cases | ✅ mid-stream abort → warn `{outcome:"aborted", abortBy:"client-disconnect", partialChars}`; happy path → silent; mid-upload disconnect → warn `chat.create` abort log; **zero error-level abort lines** |
+| Lease integrity after abort | `select busy_until from chat_sessions` | ✅ reset to epoch in every aborted case |

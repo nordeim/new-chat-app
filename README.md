@@ -257,6 +257,7 @@ Latest verification (2026-09-10, audit pass 4): typecheck, lint, build, 22/22 un
 | Playwright tests fail to connect | Start the production preview (`npm run build && npm start`) and set `TEST_BASE_URL` if non-default |
 | Session reset loses conversations | Clearing cookies orphans the workspace owner — this is documented session behavior, not data loss |
 | Reverse proxy buffers the stream | Disable response buffering for `/api/chat` (e.g. `X-Accel-Buffering: no` is sent; honor it) |
+| Logs show `{"outcome":"aborted","abortBy":"client-disconnect"}` (or older builds: `errorType:"ResponseAborted"` / `"AbortError"`) | Not a failure — the browser closed the connection mid-stream (Stop button, refresh, tab close, navigating to another chat, network drop). Next.js 16 aborts `request.signal` with a named `ResponseAborted` error and the app classifies it as a warn-level client teardown. The lease is released, the upstream request is cancelled, and the user can retry |
 
 ## License
 

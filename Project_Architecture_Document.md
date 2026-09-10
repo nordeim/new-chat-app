@@ -251,7 +251,7 @@ new-chat-app/
 │   │   ├── layout.tsx            # <html lang="en"> + metadata.title "Kimi — A little more possible"
 │   │   ├── page.tsx              # Renders <ChatWorkspace />
 │   │   └── api/
-│   │       ├── chat/route.ts     # 350 lines — origin→session→zod→magic-byte→atomic lease (3 s / 195 s)→upsert (duplicate-retry guard)→NVIDIA fetch (SSE parse, providerChunkSchema)→persist final only→SSE to browser (meta/thinking/delta/done/error) + AbortSignal 175 s + release lease
+│   │       ├── chat/route.ts     # 350 lines — origin→session→zod→magic-byte→atomic lease (3 s / 195 s)→upsert (duplicate-retry guard)→NVIDIA fetch (SSE parse, providerChunkSchema)→persist final only→SSE to browser (meta/thinking/delta/done/error) + AbortSignal 175 s + release lease; aborts (ResponseAborted/AbortError/TimeoutError via streamAbortKind) log warn-level outcome:aborted, genuine failures error-level
 │   │       ├── conversations/
 │   │       │   ├── route.ts      # GET — ensureSession, ?q= search (title ILIKE + jsonb_array_elements→content ILIKE, escaped \ % _, owner-filtered, ILIKE, limit 100, desc updatedAt, returns {conversations,configured}, sets kimi_session cache-control no-store
 │   │       │   └── [id]/route.ts # GET (strip reasoning) / PATCH (title 1–100, no-store cache) / DELETE (transaction FOR UPDATE on sessions where busyUntil < now, else 409) — all owner-scoped via identity()
@@ -268,6 +268,7 @@ new-chat-app/
 │       ├── retention.ts          # Pure pruneIdleSessions / pruneStaleConversations taking {db,tables,options} (no @/ aliases, no relative runtime imports) — consumed by scripts/prune-expired.mjs
 │       ├── server.ts             # Cookie session (kimi_session 64-hex, SHA-256 owner), ensureSession/sessionId/requireSession, assertOrigin, readJson (3 MB bounded, 415/413/400), errorResponse (ApiError 4xx vs 500 + requestId log), setSession (HttpOnly Strict, Secure via https|x-forwarded-proto)
 │       ├── sse.ts                # SSEParser — LF/CRLF/CR, split-CRLF skipLF, data: exactly-one-space, multiline join \n, incremental 1M limits, finish()
+│       ├── stream-abort.ts       # Abort taxonomy — streamAbortKind (ResponseAborted/AbortError/TimeoutError + Node body "aborted"/ECONNRESET) → warn-level structured abort logs; error-level shaper for genuine failures
 │       ├── types.ts              # ChatMessage (id, role user|assistant, content, image?, reasoning?), ConversationSummary, ChatSettings, defaultSettings (temp 1, maxTokens 16384, reasoningEffort max)
 │       └── validation.ts         # imageSchema (2_800_000, png|jpeg|webp data-uri), chatInputSchema (conversationId uuid?, content 1-16000 trimmed, image?, settings strict), titleSchema (1-100), idSchema uuid, providerChunkSchema (reasoning_content)
 ├── tests/
@@ -413,7 +414,10 @@ export async function readJson(req: NextRequest, maxBytes = 3_000_000): Promise<
 export function errorResponse(error: unknown, operation: string) {
   if (error instanceof ApiError) return NextResponse.json({ error: error.message }, { status: error.status });
   const requestId = crypto.randomUUID();
-  console.error(JSON.stringify({ operation, requestId, errorType: error instanceof Error ? error.name : "UnknownError" }));
+  const errorType = error instanceof Error ? error.name : "UnknownError";
+  const abortBy = streamAbortKind(error);            // src/lib/stream-abort.ts
+  if (abortBy) console.warn(abortErrorLog({ operation, requestId, abortBy, errorType }).line);   // client teardown
+  else console.error(JSON.stringify({ operation, requestId, errorType }));                        // genuine failure
   return NextResponse.json({ error: "The workspace could not complete this action. Please try again.", requestId }, { status: 500 });
 }
 // route.ts uses ApiError for 400/401/403/409/413/415/429/502/503 with actionable copy:
@@ -424,7 +428,7 @@ export function errorResponse(error: unknown, operation: string) {
 // 413 "The attachment is too large. Use an image under 2 MB."
 ```
 
-**Why this pattern:** Single error funnel (`ApiError` + `errorResponse`) guarantees user-facing copy is curated and actionable, never generic, never leaking provider internals; 500 path logs only `operation/requestId/errorType` (no message/cookie/key) and returns `requestId` for support correlation. Client mirrors with `apiJson`/`parseOrReload` so degraded HTML never shows raw parse errors.
+**Why this pattern:** Single error funnel (`ApiError` + `errorResponse`) guarantees user-facing copy is curated and actionable, never generic, never leaking provider internals; the 500 path logs only `operation/requestId/errorType` (no message/cookie/key) and returns `requestId` for support correlation. Abort-shaped errors (`ResponseAborted` from Next.js client disconnects, `AbortError` from the pipe-cancel race, `TimeoutError` from the route's own deadline, Node body-stream `aborted`/`ECONNRESET`) are classified by `streamAbortKind` and logged at **warn** level with `outcome:"aborted"` — expected teardown is never reported as a server failure. Client mirrors with `apiJson`/`parseOrReload` so degraded HTML never shows raw parse errors.
 
 ---
 

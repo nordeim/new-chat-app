@@ -171,6 +171,8 @@ Audit history: the severity-ranked review at `docs/CODE_REVIEW_REPORT.md` record
 
 - `ApiError(status, message)` + `errorResponse()` is the single error funnel for API routes; user-facing copy is specific ("what happened, what to do").
 - `errorResponse` logs `operation` + `requestId` + error type; surface the `requestId` in the 500 body for support correlation.
+- **Abort taxonomy (don't "fix" these):** when the browser disconnects mid-stream (Stop button, refresh, tab close, navigating away, network drop), Next.js 16 aborts `request.signal` with a named `ResponseAborted` error, which propagates through the route's `AbortSignal.any([...])` to the upstream fetch. The same disconnect can surface as a default `AbortError` (pipe-cancel race) or as Node's body-stream signature (`Error`/`"aborted"`/`ECONNRESET`) on the create path; the route's own timeout surfaces as `TimeoutError`. `src/lib/stream-abort.ts` classifies these — aborts log at **warn** level with `outcome:"aborted"`, `abortBy`, and (streaming) `partialChars`; only genuine failures log at error level. Seeing `{"outcome":"aborted","abortBy":"client-disconnect"}` is expected client teardown, not a bug.
+- On abort, partial assistant output is intentionally **not** persisted: the retry-dedupe guard (last message = same user turn) depends on it, so "try again" re-streams cleanly instead of duplicating turns.
 - Reproduce before fixing; one root-cause fix over many symptom patches; add a regression test for every bug fix.
 
 ## Communication & Documentation
