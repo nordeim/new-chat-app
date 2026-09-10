@@ -189,6 +189,22 @@ async function apiJson(response: Response): Promise<unknown> {
   return data;
 }
 
+async function fetchWorkspace(): Promise<{
+  conversations: ConversationSummary[];
+  configured: boolean;
+}> {
+  return z
+    .object({
+      conversations: z.array(summarySchema),
+      configured: z.boolean(),
+    })
+    .parse(
+      await apiJson(
+        await fetch("/api/conversations", { cache: "no-store" }),
+      ),
+    );
+}
+
 export default function ChatWorkspace() {
   const [history, setHistory] = useState<ConversationSummary[]>([]);
   const [currentId, setCurrentId] = useState<string>();
@@ -226,33 +242,31 @@ export default function ChatWorkspace() {
     item.title.toLowerCase().includes(search.toLowerCase()),
   );
 
-  const refresh = useCallback(async () => {
-    try {
-      const result = z
-        .object({
-          conversations: z.array(summarySchema),
-          configured: z.boolean(),
-        })
-        .parse(
-          await apiJson(
-            await fetch("/api/conversations", { cache: "no-store" }),
-          ),
+  // Loads (or reloads) the workspace. Returns a dispose function so effects can
+  // ignore stale responses; state updates happen only in async callbacks.
+  const refresh = useCallback(() => {
+    let cancelled = false;
+    fetchWorkspace()
+      .then((data) => {
+        if (cancelled) return;
+        setHistory(data.conversations);
+        setConfigured(data.configured);
+        setReady(true);
+      })
+      .catch((err: unknown) => {
+        if (cancelled) return;
+        setError(
+          err instanceof Error
+            ? err.message
+            : "Could not load your workspace. Please reload.",
         );
-      setHistory(result.conversations);
-      setConfigured(result.configured);
-      setReady(true);
-    } catch (err) {
-      setError(
-        err instanceof Error
-          ? err.message
-          : "Could not load your workspace. Please reload.",
-      );
-    }
+      });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
-  useEffect(() => {
-    void refresh();
-  }, [refresh]);
+  useEffect(() => refresh(), [refresh]);
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "instant", block: "end" });
   }, [messages, thinking]);
