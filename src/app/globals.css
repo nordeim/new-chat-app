@@ -1028,6 +1028,27 @@ kbd {
   border-top: 1px solid var(--line);
   margin: 22px 0;
 }
+.markdown table {
+  border-collapse: collapse;
+  margin: 16px 0;
+  max-width: 100%;
+  display: block;
+  overflow-x: auto;
+}
+.markdown th,
+.markdown td {
+  border: 1px solid var(--line);
+  padding: 7px 12px;
+  text-align: left;
+}
+.markdown th {
+  background: var(--mint);
+  color: var(--green-dark);
+  font-weight: 600;
+}
+.markdown tr:nth-child(even) td {
+  background: #f7f9f3;
+}
 .response-actions {
   display: flex;
   margin-top: 14px;

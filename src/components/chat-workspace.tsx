@@ -10,6 +10,7 @@ import {
 import Image from "next/image";
 import * as Dialog from "@radix-ui/react-dialog";
 import Markdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { z } from "zod";
 import {
   ArrowUp,
@@ -852,6 +853,7 @@ export default function ChatWorkspace() {
                       message.content ? (
                         <div className="markdown">
                           <Markdown
+                            remarkPlugins={[remarkGfm]}
                             components={{
                               a: ({ children, href }) => (
                                 <a
