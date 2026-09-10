@@ -512,7 +512,9 @@ export default function ChatWorkspace() {
         throw new Error("Streaming is unavailable. Please try again.");
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
-      const parser = new SSEParser();
+      // A final answer can contain 1.2M characters. JSON escaping can expand
+      // each character sixfold; provider frames keep the smaller default cap.
+      const parser = new SSEParser(8_000_000);
       const consume = (events: string[]) => {
         for (const value of events) {
           let item: z.infer<typeof streamEventSchema>;

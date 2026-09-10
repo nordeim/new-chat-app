@@ -1,7 +1,26 @@
 const MAX_EVENT_CHARACTERS = 1_000_000;
 
 // SSE uses LF, CRLF, or CR. Frame limits must not depend on network chunk size.
+//
+// The bound is configurable because the two sides of the pipeline see frames
+// of very different sizes: the server parses provider chunks (small), while
+// the browser must accept this app's own final `done` event, which carries a
+// complete answer (up to the server's 1.2M-character cap) as one JSON-escaped
+// data line — escaping can expand each character severalfold, so the browser
+// bound must exceed the raw answer cap.
 export class SSEParser {
+  private readonly maxEventCharacters: number;
+
+  constructor(maxEventCharacters = MAX_EVENT_CHARACTERS) {
+    if (
+      !Number.isSafeInteger(maxEventCharacters) ||
+      maxEventCharacters < 1 ||
+      maxEventCharacters > 8_000_000
+    )
+      throw new RangeError("Invalid stream event limit.");
+    this.maxEventCharacters = maxEventCharacters;
+  }
+
   private fragments: string[] = [];
   private lineLength = 0;
   private data: string[] = [];
@@ -10,7 +29,7 @@ export class SSEParser {
 
   private append(fragment: string) {
     this.lineLength += fragment.length;
-    if (this.lineLength > MAX_EVENT_CHARACTERS)
+    if (this.lineLength > this.maxEventCharacters)
       throw new Error("Stream event exceeds the size limit.");
     if (fragment) this.fragments.push(fragment);
   }
@@ -28,7 +47,7 @@ export class SSEParser {
     if (!line.startsWith("data:")) return;
     const value = line.slice(line[5] === " " ? 6 : 5);
     this.dataLength += value.length + (this.data.length ? 1 : 0);
-    if (this.dataLength > MAX_EVENT_CHARACTERS)
+    if (this.dataLength > this.maxEventCharacters)
       throw new Error("Stream event exceeds the size limit.");
     this.data.push(value);
   }
