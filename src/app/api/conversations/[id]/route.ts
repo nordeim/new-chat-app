@@ -60,7 +60,10 @@ export async function PATCH(req: NextRequest, context: Context) {
       .where(condition)
       .returning({ id: conversations.id, title: conversations.title });
     if (!item) throw new ApiError(404, "This conversation was not found.");
-    return NextResponse.json(item);
+    return NextResponse.json(
+      { id: item.id, title: item.title },
+      { headers: { "Cache-Control": "no-store" } },
+    );
   } catch (error) {
     return errorResponse(error, "conversations.rename");
   }

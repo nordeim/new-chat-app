@@ -204,8 +204,16 @@ test("conversation CRUD enforces session isolation and same-origin writes", asyn
         })
       ).status(),
     ).toBe(200);
+    const renamed = await first.request.patch(url, {
+      headers: { Origin: base },
+      data: { title: "Renamed safely again" },
+    });
+    expect(renamed.status()).toBe(200);
+    expect(renamed.headers()["cache-control"]).toBe("no-store");
     const response = await first.request.get(url);
-    expect((await response.json()).conversation.title).toBe("Renamed safely");
+    expect((await response.json()).conversation.title).toBe(
+      "Renamed safely again",
+    );
     const page = await first.newPage();
     await page.goto(base);
     await page.getByRole("button", { name: "Renamed safely" }).click();
