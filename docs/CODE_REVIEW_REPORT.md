@@ -69,12 +69,12 @@ The application code is **shippable** after this pass's remediations, with one d
 - **Security envelope unchanged:** a direct (non-browser) attacker could always spoof `Host`, so the comparison target was never a CSRF boundary; browsers cannot forge `Origin` or `sec-fetch-site`, and cross-site origins match neither `Host` nor the trusted ingress's `x-forwarded-host`. Deployment requirement (trusted ingress, public host preserved in `x-forwarded-host`) is documented in README.
 - **Confidence:** Verified (red→green locally; live verification pending redeploy — the hardened live suite will prove it).
 
-### H2 — CI push trigger corrupted (CI never ran on `main`) ✅ remediated
+### H2 — CI push trigger corrupted (CI never ran on `main`) ❌ voided by pass 6 — see Pass 6, M3
 - **Location:** `.github/workflows/ci.yml`.
 - **Description:** The trigger read `branches: ain]` — a corrupted literal, so `push` events for `main` matched nothing and the entire gates+E2E pipeline silently stopped running on the primary branch (only `pull_request` still fired).
 - **Evidence:** File inspection (`cat -A` for hidden bytes).
 - **Remediation:** `branches: [main]`; plus the C2 secret-scan and production audit steps now ride the same pipeline.
-- **Confidence:** Verified (file content).
+- **Confidence:** Verified (file content). **Superseded:** pass 6's byte-level re-verification (`od -c` on every revision of the file) shows the trigger has been `branches: [main]` since `3d10201`; the "corruption" was a terminal rendering artifact that swallowed `[m`, and this finding — plus the corresponding README/PAD/SKILL notes — recorded the artifact, not the bytes.
 
 ## 🟡 Medium
 
@@ -251,3 +251,112 @@ Probes also showed the pipeline's cancel path (`pipeTo → source.cancel → rou
 | Local E2E | Playwright vs production build on embedded PostgreSQL 18 | ✅ 24/24 (12 skipped live by design) |
 | Post-fix live verification | same repro harness, three cases | ✅ mid-stream abort → warn `{outcome:"aborted", abortBy:"client-disconnect", partialChars}`; happy path → silent; mid-upload disconnect → warn `chat.create` abort log; **zero error-level abort lines** |
 | Lease integrity after abort | `select busy_until from chat_sessions` | ✅ reset to epoch in every aborted case |
+
+---
+
+# Pass 6 — 2026-09-10 (fresh clone, sample-build alignment, byte-safe evidence discipline)
+
+**Scope:** `src/**`, `tests/**`, `.env` tracking state, root docs, and the live deployment (`https://kimi-chat.jesspete.shop/`). **Method:** fresh-clone contract re-verification of every AGENTS/CLAUDE/README claim against the code; full local gates (typecheck → lint → 28 unit → build) on embedded PostgreSQL 18.4; browser E2E locally (24/24) and live (12/12); tiered diff of `sample-build/` (an enhanced derivative of upstream `dd276ce` with its own verified pass, see `sample-build/docs/VERIFICATION.md`) against `src/`; red→green remediation of every accepted finding; byte-level (`od -c`) verification for every claim involving bracket sequences.
+
+## Summary
+
+| Severity | Found | Remediated this pass | Open after pass |
+|----------|-------|----------------------|-----------------|
+| 🔴 Critical | 1 | 1 (code) | 2 operator rotations carried (SSH key in history; NVIDIA key rotation still pending) |
+| 🟠 High | 2 | 2 | 0 |
+| 🟡 Medium | 3 | 3 | 0 |
+| 🟢 Low | 3 | 3 | 0 |
+| ⚪ Info | 3 | 1 | 2 (documented tradeoffs) |
+| ❌ Voided | 1 | — | Pass-3 H2 (CI trigger) reclassified as a display artifact |
+
+## 🔴 Critical
+
+### C1 — `.env` re-tracked with a live-format provider key by the sample-build commit ✅ remediated (code) / rotation still pending
+- **Location:** `.env` at repo root, added to tracking by `797f5c5` ("update sample build"), which renamed `sample-build/.env.example` → `/.env`. The file carries an `nvapi-` key in live format.
+- **Description:** Pass 3 (commit `272d7ff`) had untracked `.env` for exactly this exposure; nine commits later the same class of exposure returned through an innocent-looking rename, and no gate fired — see V1 below for why the CI trigger was not the reason this time (it was healthy; CI simply had not been observed running because no push exercised it between the two states — the secret scan only runs on CI events).
+- **Evidence:** `git ls-files` lists `.env`; `rg -c 'nvapi-[A-Za-z0-9_-]{20,}' .env` → 1; `git show --stat 797f5c5` shows the rename. Byte-verified.
+- **Remediation:** `git rm --cached .env` (file stays locally; `.gitignore` rule now applies); the CI-pattern secret scan over tracked files is clean again. Any key that ever matched history must still be rotated by the operator — removal does not unpublish `7afe083`, `797f5c5`, or anything pushed in between.
+- **Confidence:** Verified.
+
+## 🟠 High
+
+### H1 — Completed long answers could fail in the browser after the server persisted them ✅ remediated (ported sample-build M2)
+- **Location:** `src/lib/sse.ts` (fixed 1M-character event cap) and the workspace's parser construction.
+- **Description:** The server accepts answers up to 1.2M characters (content + reasoning) and streams the completed answer as a single JSON-escaped `done` event. The browser parser capped any event at 1M characters, so an answer near the cap threw "Stream event exceeds the size limit." client-side: the user saw an interruption error for an answer the server had already saved.
+- **Evidence (red):** `tests/stream-limit.test.mjs` boundary test (1.2M-char answer, JSON-escaped, chunked at 16 KB) threw the size-limit error; a custom-limit test proved the constructor ignored arguments entirely.
+- **Remediation (green):** `SSEParser(maxEventCharacters = 1_000_000)` with `RangeError` validation (safe integer, 1–8M); server-side provider parsing keeps the 1M default; the workspace constructs `new SSEParser(8_000_000)` for browser frames. 3 unit tests; 31/31 pass.
+- **Confidence:** Verified (red→green locally; the defect reproduces deterministically at the boundary).
+- **Note:** The live deployment has not been redeployed with this fix; it ships with the next deploy.
+
+### H2 — Raw transport errors reached the banner ✅ remediated (ported sample-build M3 + extension)
+- **Location:** `chat-workspace.tsx` `sendMessage` catch and `openConversation` catch.
+- **Description:** Any `Error` instance's message was shown verbatim, so `TypeError: Failed to fetch` / `network error` (observed live per the sample-build verification) reached the UI. `openConversation` had the same hole for non-Error throws and for raw fetch rejections.
+- **Remediation (TDD):** `WorkspaceRequestError` now marks intentionally curated copy and only it is shown verbatim; everything else in `sendMessage` renders "The connection was interrupted. Check your network and try again." and in `openConversation` renders "Could not open this conversation. Check your network and try again." The malformed-frame guard joined the boundary class so a degraded-proxy stream keeps its stream-interrupted copy rather than being misclassified as a network failure (caught by the existing malformed-stream test, which failed against the first cut and passes after). Tests: `network-recovery.spec.ts` (1), `recovery.spec.ts` network-on-open case (1, new this pass).
+- **Confidence:** Verified (red→green).
+
+### H3 — Failed conversation navigation left the previous chat as the send destination ✅ remediated (ported sample-build H1)
+- **Location:** `chat-workspace.tsx` `openConversation`.
+- **Description:** A failed conversation load kept `currentId` pointing at the previously open conversation; the breadcrumb still showed the old title and the next message would send with the old `conversationId` — unintended context.
+- **Evidence (red):** `recovery.spec.ts` "failed conversation navigation clears the previous send destination": POST carried the stale conversation id, breadcrumb showed the old title.
+- **Remediation (green):** `setCurrentId(undefined)` before the fetch (sequence guard unchanged); POST carries no conversation id, breadcrumb reads "New chat".
+- **Confidence:** Verified (red→green).
+
+## 🟡 Medium
+
+### M1 — Search results were not bound to their query ✅ remediated (ported sample-build M1)
+- **Location:** `chat-workspace.tsx` search effect (`serverResults` replaced only on success).
+- **Description:** A slow or failed server search left the previous query's results visible as if they matched the new term; failures degraded silently with no retry affordance.
+- **Evidence (red):** `recovery.spec.ts` both failure modes (503 and malformed contract): Alpha results remained after switching to Beta; no fallback notice; retry impossible.
+- **Remediation (green):** results are stored as `{term, items, failed}` and only rendered when `term === search.trim()`; failures fall back to local title matching behind a `role="status"` notice ("Full-text search is unavailable. Showing title matches only.") with a Retry control; `searchAttempt` re-runs the effect. Local title filtering now trims the term (L3).
+- **Confidence:** Verified (red→green).
+
+### M2 — Welcome entry animation transiently violated AA contrast ✅ remediated (ported sample-build M5)
+- **Location:** the `welcome` entry animation (opacity fade in `globals.css`), remediated by the adopted `workspace-polish.css` layer.
+- **Description:** the sample-build pass measured 4.41:1 on starter descriptions mid-entry (ancestor opacity ~0.45). The polish layer replaces it with a position-only `welcome-settle` animation that keeps text fully opaque.
+- **Evidence:** full local suite including axe WCAG AA on welcome, dialogs, and the error state passes 29/29 against the new build.
+- **Confidence:** Verified (via the ported layer's own verification plus this pass's axe runs).
+
+### M3 — Audit-trail integrity: a rendering artifact entered the record as a "corrupted" CI trigger ❌ voided (V1)
+- **Location:** pass-3 H2 above; mirrored in README, PAD, and `new-chat_SKILL.md`.
+- **Description:** terminals in this toolchain can swallow the byte pair `[m` when rendering output, so `branches: [main]` displays as `branches: ain]`. Pass 3 recorded the rendered string as file content, "fixed" it (its diff never touched the trigger), and the docs propagated the story. This pass initially repeated the same mistake in a commit message, then caught it.
+- **Evidence:** `od -c` over all four revisions of `.github/workflows/ci.yml` (`3d10201`, `ba0f0b8`, `dc1c664`, `db9dab4`) — every one contains the bytes `b r a n c h e s :   [ m a i n ]`; the commit `dc1c664` diff shows no trigger change.
+- **Remediation:** the trigger was never broken, so no code change is needed; the record is corrected here, in README's change log, the PAD, and the SKILL file. Historical ledger entries above are annotated, not rewritten.
+- **Confidence:** Verified (byte-level). Process rule going forward: any claim involving bracket sequences in this environment is checked with a byte-safe method (counts, `od -c`, or scripted analysis) before it enters a finding, a commit message, or a doc.
+
+## 🟢 Low
+
+| # | Finding | Resolution |
+|---|---------|------------|
+| L1 | `.conversation-list` not keyboard-focusable (axe `scrollable-region-focusable`) | `tabIndex={0}` on the nav (ported; sample-build M4) |
+| L3 | Local title filtering matched the untrimmed term | `search.trim().toLowerCase()` (aligned with the server-side trim) |
+| L9 | Copy-acknowledgement timers not cleared on re-copy/unmount (carried open from pass 4) | Handles live in refs, cleared before each new copy and on unmount (`copy()` + `copyCode()`); code-inspection verified, no observable behavior change to assert |
+
+## ⚪ Informational
+
+- **I1 — Live-suite hardening adopted:** the strengthened live-site spec (Secure-cookie assertion, exact-403 cross-origin rejection, 200 s provider window, persisted-answer verification via `GET /api/conversations/[id]` with reasoning-strip assertion, self-cleanup DELETE) replaced the weaker in-tree version; 12/12 against the live deployment.
+- **I2 — Polish layer adopted:** `workspace-polish.css` + bloom-mark emblem + `icon.svg` favicon ported from sample-build. The layer was verified to reference only classes this app renders (plus `search-feedback`, added with M1). `.emblem-glow`/`.emblem-star` rules in `globals.css` are now inert (no matching markup) but kept byte-identical to sample-build for clean future diffs.
+- **I3 — Carried operator backlog (unchanged):** rotate both exposed credentials (C1/C2 chain); redeploy to ship pass-6 fixes; schedule `npm run prune`; nonce-based CSP `script-src`; Lighthouse re-baseline after this render-path change (the polish layer changed fonts/layout, so the pass-2 baseline no longer applies).
+
+## Verification ledger (pass 6)
+
+| Check | How | Result |
+|-------|-----|--------|
+| Fresh-clone baseline gates | `npm ci`, `npm run typecheck`, `npm run lint`, `npm test`, `npm run build` | ✅ 28/28 unit pre-change; typecheck/lint/build clean |
+| Local E2E (pre-change) | Playwright vs production build (`:3004`) on embedded PostgreSQL 18.4 (`embedded-postgres` npm package; `pgcrypto` extension created; migration hash `d5d43cb…` confirmed) | ✅ 24/24 (4 initial failures were environmental — fixtures need `DATABASE_URL` in the test process; passed with it) |
+| Live E2E (pre-change) | `LIVE_SITE_URL=https://kimi-chat.jesspete.shop npx playwright test tests/live-site.spec.ts` | ✅ 12/12 including a full provider round-trip |
+| `.env` tracking | `git ls-files`, `rg -c` key pattern, `git show --stat 797f5c5`, `git check-ignore` after fix | ✅ verified exposure → verified remediated |
+| CI trigger bytes | `od -c` on all 4 revisions of ci.yml + scripted per-line analysis of docs | ✅ always `[main]`; phantom finding documented |
+| SSE parser boundary | `tests/stream-limit.test.mjs` (red → green), full unit suite | ✅ 31/31 |
+| Search/nav/network hardening | `tests/recovery.spec.ts` (4), `tests/network-recovery.spec.ts` (1) — red → green | ✅ 5/5 |
+| Full local suite (post-change) | workspace 12 + stream-ui 12 + recovery 4 + network-recovery 1 vs rebuilt production server | ✅ 29/29 (incl. axe WCAG AA: welcome, dialogs, error state) |
+| Live E2E (post-change, strengthened spec) | `LIVE_SITE_URL=…` run against the current deployment | ✅ 12/12 (fixes ship with next deploy) |
+| Secret scan (CI pattern, tracked files) | `git grep -lIE 'nvapi-…\|BEGIN …PRIVATE KEY…\|ghp_…\|AKIA…' -- . ':!package-lock.json' ':!skills' ':!sample-build' ':!docs'` | ✅ clean |
+| Dependency audit | `npm audit --omit=dev` / `npm audit` | ✅ prod 0 / dev-only esbuild chain unchanged (M4, pass 4) |
+
+## Remediation backlog (operator / next pass)
+
+1. Rotate the NVIDIA provider key and the SSH deployment key (carried; `797f5c5` re-exposed a key-format credential in tracked history).
+2. Redeploy the production build so pass-6 fixes reach the live site; then re-run the strengthened live suite.
+3. Schedule retention (`npm run prune -- --idle-days 30`) via weekly cron.
+4. Re-baseline Lighthouse after the polish-layer render changes.
+5. Nonce-based CSP `script-src` (deploy-time hardening).

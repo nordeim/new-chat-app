@@ -199,10 +199,17 @@ E2E prerequisites: a disposable test `DATABASE_URL` (fixtures are inserted and c
 
 ## Project status & recent changes
 
-Latest verification (2026-09-10, audit pass 4): typecheck, lint, build, 22/22 unit tests, 24/24 Playwright tests locally (including new stop-control, malformed-stream, and image-rejection coverage), and 12/12 live-deployment E2E tests against `https://kimi-chat.jesspete.shop/` — including a full provider round-trip (streamed answer persisted, degraded-provider behavior observed and handled). Production dependency audit clean. Full evidence and the severity-ranked finding list live in [`docs/CODE_REVIEW_REPORT.md`](docs/CODE_REVIEW_REPORT.md).
+Latest verification (2026-09-10, audit pass 6): typecheck, lint, build, 31/31 unit tests, 29/29 Playwright tests locally (workspace, stream-UI, recovery, and network-recovery suites including axe WCAG AA on welcome, dialogs, and the error state), and 12/12 live-deployment E2E tests against `https://kimi-chat.jesspete.shop/` with the strengthened suite — including a full provider round-trip verified all the way to persisted storage. Production dependency audit clean. Full evidence and the severity-ranked finding list live in [`docs/CODE_REVIEW_REPORT.md`](docs/CODE_REVIEW_REPORT.md) (pass 6 also corrects a pass-3 record: the CI trigger was never corrupted — see the byte-safe verification note there).
 
 | Change | Notes |
 |--------|-------|
+| Long answers fixed client-side | The browser SSE parser now takes a validated 8M bound (server provider-side parsing keeps 1M): a completed ~1.2M-char answer no longer throws "size limit" in the browser after the server already persisted it (pass 6, from sample-build M2) |
+| Curated-error boundary | Only intentional copy (`WorkspaceRequestError`) reaches the banner verbatim; raw transport failures (`Failed to fetch` / `network error`, observed live) render actionable network guidance — in both the send and open-conversation paths (pass 6) |
+| Query-bound search | A failed or contract-breaking server search no longer shows the previous query's results: results are bound to their term, a `role="status"` notice offers title-only fallback, and a Retry control re-runs the search (pass 6) |
+| Failed-navigation guard | A failed conversation load clears the current selection so the next message can never land in the previously open chat (pass 6) |
+| Editorial mint layer | `workspace-polish.css` adopted from sample-build: position-only welcome animation (fixes a transient 4.41:1 contrast dip), refined sidebar/composer/starter styling, bloom-mark emblem, and an SVG favicon (pass 6) |
+| Strengthened live E2E | The live suite asserts the cookie is `Secure`, requires exactly 403 on cross-origin writes, verifies the streamed answer is persisted (nonce in an assistant message via the read API, reasoning stripped), and cleans up its own conversation (pass 6) |
+| Copy timers cleaned | Copy/code-copy acknowledgement timers are tracked and cleared on re-copy and unmount (closes pass-4 L9) |
 | Syntax-highlighted answers | Assistant Markdown now highlights code (rehype-highlight + highlight.js, mint theme) with a per-block copy control; the renderer is memoized so completed messages skip re-parsing during streaming |
 | Image lightbox | Message images open in a Radix full-size preview (focus trap, Escape, focus restore) |
 | Grouped history | Sidebar conversations grouped Today / Yesterday / Previous 7 days / Older with relative-time tooltips |
@@ -219,7 +226,8 @@ Latest verification (2026-09-10, audit pass 4): typecheck, lint, build, 22/22 un
 | Incremental SSE parser | Adopted from `sample-build`: LF/CRLF/CR parity, split CRLF across chunks, exactly-one-space `data:` prefix handling, incremental size accounting |
 | Hardened live E2E | The streaming test waits for a nonce inside an assistant message (no more false "streamed" from the user bubble), fails loudly on error banners, and verifies persistence |
 | Secret hygiene | A tracked `.env` carrying a provider key was untracked (and the key, which NVIDIA rejects with 403, must still be rotated); a second embedded key in `docs/` was redacted; CI now runs a credential-pattern scan |
-| CI trigger repaired | `branches: ain]` → `branches: [main]` — CI was silently skipping every push to `main`; production-only `npm audit` added |
+| Secret hygiene (pass 6) | The "update sample build" commit re-tracked `.env` — with a live-format key — by renaming `sample-build/.env.example` to the repo root; untracked again and the scan is clean. Rotation of everything ever matching history is still the operator's item |
+| CI trigger record corrected (pass 6) | Pass 3 recorded the push trigger as corrupted (`branches: ain]`) and "repaired" — byte-level verification (`od -c` over every revision) shows the trigger has been valid since the file was created; the finding was a terminal rendering artifact that swallows `[m`. The trigger itself never changed and the phantom repair note is voided in the audit report |
 | Accessibility in error states | Error-banner contrast raised to 4.5:1+ and the WCAG suite now scans the error state (pass 2) |
 | Robust degraded-API UX | Non-JSON or contract-breaking API responses show curated copy instead of raw parse errors (pass 2) |
 | Server-side search | `GET /api/conversations?q=` matches titles and message content, owner-isolated; ⌘K dialog queries it with a 250 ms debounce (pass 2) |

@@ -50,6 +50,7 @@ Stack: Next.js 16 App Router · React 19 · TypeScript (strict) · Tailwind v4 (
 - The workspace is composed of `chat-workspace.tsx` (shell: composer, dialogs, sidebar) plus extracted pieces (`markdown-message.tsx`, `image-lightbox.tsx`, `navigation-frame.tsx`): handle loading/error/empty/success states explicitly; disable controls during async work; keep derived state out of `useState`.
 - Effects must not call `setState` synchronously (lint rule `react-hooks/set-state-in-effect` is an error here).
 - The send `finally` defers the busy flip by one macrotask (`setTimeout 0`): swapping the stop button for the submit button inside the click's input task makes Chromium re-target the click's activation and re-submit the form. Do not "simplify" this back to a synchronous flip.
+- Only `WorkspaceRequestError` messages are shown verbatim in the banner. New curated copy throws `WorkspaceRequestError`; raw `Error`s from transport failures render the network-failure guidance instead. The browser constructs `new SSEParser(8_000_000)` — the final `done` event can carry a ~1.2M-char escaped answer; never shrink it back to the default.
 
 **Next.js 16 (App Router)**
 - Route handlers under `src/app/api/*` with `export const runtime = "nodejs"` where streaming is used (`maxDuration = 600` on `/api/chat`; provider timeout 175s, 590s for long outputs).
@@ -58,7 +59,7 @@ Stack: Next.js 16 App Router · React 19 · TypeScript (strict) · Tailwind v4 (
 - Next.js injects a global route announcer with `role="alert"` — never assert against `getByRole("alert")` unscoped in tests; target `.error-banner`.
 
 **Tailwind v4 (CSS-first)**
-- No `tailwind.config.js`; tokens and component styles live in `src/app/globals.css` (`--mint` palette). Reuse tokens; do not hardcode colors.
+- No `tailwind.config.js`; tokens and component styles live in `src/app/globals.css` (`--mint` palette), layered by `src/app/workspace-polish.css` (imported after it in `layout.tsx` — the editorial mint layer; keep the order). Reuse tokens; do not hardcode colors.
 
 ## Development Workflow
 
@@ -136,10 +137,10 @@ curl -s http://localhost:3000/api/conversations | grep configured
 
 ### Test Pyramid
 
-- Unit (`tests/core.test.mjs`, `tests/origin.test.mjs`; 22 total): zod schemas, SSE parser edge cases (LF/CRLF/CR, split chunks, size limits), the pure same-origin gate, sidebar history grouping + relative time, markdown node-text extraction, and load-failure copy selection — fast, no services.
+- Unit (`tests/core.test.mjs`, `tests/origin.test.mjs`, `tests/stream-limit.test.mjs`; 31 total): zod schemas, SSE parser edge cases (LF/CRLF/CR, split chunks, size limits, the configurable browser/provider bounds), the pure same-origin gate, sidebar history grouping + relative time, markdown node-text extraction, and load-failure copy selection — fast, no services.
 - **API/integration** (`tests/workspace.spec.ts`): session isolation, ownership, origin enforcement, cookie flags, `?q=` search, retention pruning — Playwright request context + Drizzle fixtures.
-- **E2E/UI** (`tests/workspace.spec.ts`, `tests/stream-ui.spec.ts`; 24 local total): user journeys, WCAG AA via axe (welcome, dialogs, **and the error state**), streamed-answer rendering through transport fixtures (no live provider needed) — including stop-control abort, malformed-frame copy, code-copy, lightbox, skip link, character counter, and DB-outage copy.
-- **Live deployment** (`tests/live-site.spec.ts`): env-gated via `LIVE_SITE_URL`; validates a real deployment (headers, API contract, session isolation, and one provider round-trip when configured — its error race is scoped to `.error-banner` because of the route announcer above).
+- **E2E/UI** (`tests/workspace.spec.ts`, `tests/stream-ui.spec.ts`, `tests/recovery.spec.ts`, `tests/network-recovery.spec.ts`; 29 local total): user journeys, WCAG AA via axe (welcome, dialogs, **and the error state**), streamed-answer rendering through transport fixtures (no live provider needed) — including stop-control abort, malformed-frame copy, code-copy, lightbox, skip link, character counter, DB-outage copy, failed-search fallback + retry, failed-navigation send-destination guard, and network-failure copy.
+- **Live deployment** (`tests/live-site.spec.ts`): env-gated via `LIVE_SITE_URL`; validates a real deployment (headers, Secure cookie, exact-403 cross-origin writes, API contract, session isolation, and one provider round-trip when configured — verified into persisted storage via the read API, with the test deleting only its own conversation; its error race is scoped to `.error-banner` because of the route announcer above).
 
 ### Test Commands
 

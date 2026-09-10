@@ -267,7 +267,7 @@ new-chat-app/
 │       ├── origin.ts             # Pure isSameOriginRequest(origin,host,forwardedHost,secFetchSite) — unit-testable, no Next/DB imports
 │       ├── retention.ts          # Pure pruneIdleSessions / pruneStaleConversations taking {db,tables,options} (no @/ aliases, no relative runtime imports) — consumed by scripts/prune-expired.mjs
 │       ├── server.ts             # Cookie session (kimi_session 64-hex, SHA-256 owner), ensureSession/sessionId/requireSession, assertOrigin, readJson (3 MB bounded, 415/413/400), errorResponse (ApiError 4xx vs 500 + requestId log), setSession (HttpOnly Strict, Secure via https|x-forwarded-proto)
-│       ├── sse.ts                # SSEParser — LF/CRLF/CR, split-CRLF skipLF, data: exactly-one-space, multiline join \n, incremental 1M limits, finish()
+│       ├── sse.ts                # SSEParser — LF/CRLF/CR, split-CRLF skipLF, data: exactly-one-space, multiline join \n, incremental size limits (validated constructor bound: 1M provider default, 8M browser), finish()
 │       ├── stream-abort.ts       # Abort taxonomy — streamAbortKind (ResponseAborted/AbortError/TimeoutError + Node body "aborted"/ECONNRESET) → warn-level structured abort logs; error-level shaper for genuine failures
 │       ├── types.ts              # ChatMessage (id, role user|assistant, content, image?, reasoning?), ConversationSummary, ChatSettings, defaultSettings (temp 1, maxTokens 16384, reasoningEffort max)
 │       └── validation.ts         # imageSchema (2_800_000, png|jpeg|webp data-uri), chatInputSchema (conversationId uuid?, content 1-16000 trimmed, image?, settings strict), titleSchema (1-100), idSchema uuid, providerChunkSchema (reasoning_content)
@@ -277,7 +277,7 @@ new-chat-app/
 │   ├── workspace.spec.ts         # Playwright — welcome/prompt starters/settings, missing-key UX, image attach/remove, mobile viewport + Escape restore, WCAG via axe, CRUD isolation (two contexts), API 400/403, x-forwarded-host regression, ?q= search (title+content, owner-isolated), search dialog (xylophone), retention (idle cascade + stale)
 │   ├── stream-ui.spec.ts         # Hermetic — mocked APIs, streamed answer + GFM table + error state WCAG + non-JSON friendly copy
 │   └── live-site.spec.ts         # Gated LIVE_SITE_URL — title/welcome/console, starters, settings, search, mobile overflow, WCAG, health/session cookie/cross-origin/invalid id/session isolation, provider streaming (assistant-nonce only, error banner text, Copy + persistence)
-├── sample-build/                 # Reference build (uploaded) — NOT app code, excluded from tsconfig/eslint; source of SSE incremental scanner + NavigationFrame pattern; workspace-polish.css deliberately not adopted
+├── sample-build/                 # Reference build (uploaded) — NOT app code, excluded from tsconfig/eslint; source of SSE incremental scanner + NavigationFrame pattern; workspace-polish.css adopted in pass 6
 ├── skills/                       # Reference material — NOT app code, excluded from tsconfig/eslint
 ├── docs/                         # Reference + audit — NOT app code, excluded; CODE_REVIEW_REPORT.md is the audit ledger
 └── tsconfig.json                 # target ES2017, jsx react-jsx, strict, noEmit, bundler, isolatedModules, baseUrl ., paths @/* → src/*, include next-env + **/*.ts/tsx + .next/types, exclude node_modules/skills/sample-build/docs
@@ -536,11 +536,11 @@ Additional accents: `.peach #faede4/#bd8d71`, `.lavender #f0edf9/#9b8cb2`, `.yel
 - **Library discipline (CRITICAL per `CLAUDE.md`):** Only Radix Dialog is used from outside; all other chrome is bespoke `globals.css` — composer `.composer:focus-within border #aabf94`, `box-shadow 0 0 0 3px #d6e4c829`, buttons with `transition background/color/box-shadow/transform 0.18s`, `button:active translateY(1px)`.
 - **Radix usage:** `Dialog.Root` + `Dialog.Overlay asChild` (`.mobile-scrim`) + `Dialog.Content asChild` + `onCloseAutoFocus` → focus opener; `Dialog.Title`/`Description` for a11y; `Dialog.Close` for `Modal`. Radix backdrop is `aria-hidden`; drawer carries `.sidebar-close` inside.
 - **Markdown:** `react-markdown` + `remark-gfm` with `a → target _blank noopener noreferrer`, `img → [Image: alt]` (no remote fetch), links underlined `offset 3px`, `pre` with `background #f1f4ed, border #e0e7d8, radius 9px`, `code` pill `background #f0f3eb`, tables `border-collapse` with `th bg var(--mint)`.
-- **Icons:** `lucide-react` — `KimiMark` bespoke “K + square” SVG (23/30 px, `currentColor`), plus `Search`, `Plus`, `MessageSquare`, `Sparkles`, `Brain`, `Code2`, `ImageIcon`, `PenLine`, `Lightbulb`, `ChevronDown`, `X`, `Copy`/`Check`, `ArrowUp`/`ArrowUpRight`/`ArrowRight`, `ShieldCheck`, `SlidersHorizontal`, `Trash2`, `Download`, `Square`, `Menu`, `PanelLeftClose`, `MoreHorizontal`, `Command`, `Zap`, `Eye`, `Loader2` (spin), `ExternalLink`.
+- **Icons:** `lucide-react` — `Search`, `Plus`, `MessageSquare`, `Sparkles` (sidebar), `Brain`, `Code2`, `ImageIcon`, `PenLine`, `Lightbulb`, `ChevronDown`, `X`, `Copy`/`Check`, `ArrowUp`/`ArrowUpRight`/`ArrowRight`, `ShieldCheck`, `SlidersHorizontal`, `Trash2`, `Download`, `Square`, `Menu`, `PanelLeftClose`, `MoreHorizontal`, `Command`, `Eye`, `Loader2` (spin), `ExternalLink`; the welcome emblem is an inline `bloom-mark` SVG (four rotated ellipses + core circle) adopted with the editorial mint layer; `src/app/icon.svg` is the mint favicon.
 
 ### 5.4 Motion / Animation
 
-- **Keyframes:** `pulse` (thinking dots `opacity 0.4→1`, `translateY -3px`, 1.4 s, stagger 0.2 s), `spin` (`rotate 360`, 1.5 s linear, for `Loader2`), `fade-in` (`opacity 0→1`, 0.15–0.2 s for dialogs/toast), `welcome-in` (`opacity 0→1` + `translateY 7px→0`, 0.6 s ease-out for welcome).
+- **Keyframes:** `pulse` (thinking dots `opacity 0.4→1`, `translateY -3px`, 1.4 s, stagger 0.2 s), `spin` (`rotate 360`, 1.5 s linear, for `Loader2`), `fade-in` (`opacity 0→1`, 0.15–0.2 s for dialogs/toast), `welcome-in` (inherited from `globals.css`, superseded for the welcome section by the polish layer's position-only `welcome-settle` (`translateY 6px→0`, 0.45 s) — the opacity fade transiently measured 4.41:1 mid-entry).
 - **Transitions:** `button` `background/color/box-shadow/transform 0.18s`; `composer` `border/box-shadow 0.2s`; `starter-card:hover translateY(-3px)` + `box-shadow 0 5px 18px #24391d08`.
 - **Reduced motion:** `playwright.config.ts` `reducedMotion: "reduce"` for E2E; a global `prefers-reduced-motion: reduce` media query neutralizes animations (globals.css).
 
@@ -686,7 +686,7 @@ npm start           # next start (NODE_ENV=production, reads .env, needs DATABAS
 | `TEST_BASE_URL` | No | Playwright target origin | `http://localhost:3000` (or `http://localhost:3004` when 3000 busy) |
 | `LIVE_SITE_URL` | No | Target for `tests/live-site.spec.ts` (`https://kimi-chat.jesspete.shop`) | — (suite skipped when unset) |
 
-`.env` is untracked, gitignored (`.gitignore:10:.env`, `!.env.example` kept), after late remediation `272d7ff` (prior claim `dc1c664` did not take effect; at `eb654aa` `git ls-tree -r HEAD -- .env` still showed it). History retains exposed keys — rotate at GitHub + NVIDIA console.
+`.env` is untracked, gitignored (`.gitignore:10:.env`, `!.env.example` kept). Pass 3 untracked it (`272d7ff`); the sample-build commit `797f5c5` re-tracked it (renamed `sample-build/.env.example` → `/.env`, carrying a live-format key) and pass 6 untracked it again. History retains exposed keys — rotate at GitHub + NVIDIA console.
 
 ### 8.3 Docker Configuration
 
@@ -723,7 +723,7 @@ Verified rebuild: `sudo docker ps` → `new_chat_postgres Up 5 minutes (healthy)
 
 ### 8.4 CI/CD Pipeline
 
-**File:** `.github/workflows/ci.yml` · **Trigger:** `push: branches: [main]` + `pull_request` (fixed from `branches: ain]` at `dc1c664`).
+**File:** `.github/workflows/ci.yml` · **Trigger:** `push: branches: [main]` + `pull_request`. Pass 6 byte-verified (`od -c`) that the trigger has been valid since `3d10201`; pass 3's "fixed from a corrupted literal at `dc1c664`" note was a terminal rendering artifact and is voided — see `docs/CODE_REVIEW_REPORT.md` Pass 6, M3.
 
 ```yaml
 jobs:
@@ -803,7 +803,7 @@ curl http://localhost:3000/api/health  # {"ok":true}
 ### 9.3 Code Style Rules
 
 - **TypeScript:** `strict`, no `any` (use `unknown` + narrowing), no `@ts-ignore`, no explicit return types unless inference fails; `interface` over `type` for shapes.
-- **React 19:** Handle all UI states (loading/error/empty/success); disable controls during async; keep derived state out of `useState`; effects must not call `setState` synchronously (`react-hooks/set-state-in-effect` is error, fixed via `queueMicrotask`).
+- **React 19:** Handle all UI states (loading/error/empty/success); disable controls during async; keep derived state out of `useState`; effects must not call `setState` synchronously (`react-hooks/set-state-in-effect` is error — the search effect returns early for empty terms and updates state only in async callbacks).
 - **Zod at boundaries:** All external input validated in `src/lib/validation.ts` (`chatInputSchema` 16k, `titleSchema` 1–100, `imageSchema` data-uri, `providerChunkSchema`). Client validates API/stream payloads via `apiJson`/`parseOrReload` (degraded HTML never shows raw parse errors).
 - **Imports:** `tsconfig` `baseUrl .` + `paths @/* → src/*`; scripts use explicit `.ts` extensions (Node type-stripping requires extensions, no `@/` alias in scripts — `retention.ts`/`seed.ts` keep runtime imports to `drizzle-orm` + injected tables).
 - **Formatting:** After `eslint --fix`, re-run formatting/order-sensitive gates and restage so index matches working tree.
@@ -829,8 +829,8 @@ curl http://localhost:3000/api/health  # {"ok":true}
 | ⚪ **Info** | **100-conversation cap race** — concurrent `count → insert` can transiently exceed by 1 (bounded, self-corrects via retention; advisory-lock fix adds complexity without real risk) | Self-inflicted, bounded | **Accepted** (report I1) |
 | ⚪ **Info** | **429 lease-conflict has no automated test** (reaching lease requires valid provider key) | SQL condition `UPDATE … WHERE busyUntil < now` is concurrency-safe but untested via API | **Backlog** — extract lease seam for injectable coverage if wanted (I2) |
 | ⚪ **Info** | **CSP is minimal** (`frame-ancestors 'none'; base-uri 'self'; object-src 'none'`) — nonce-based `script-src` remains deployment hardening | Framing/base/plugins covered; script nonce is deployment-specific | **Carried** (I3) |
-| ⚪ **Info** | **`workspace-polish.css` not adopted** from `sample-build` | Override targets sample-build’s stylesheet, not this app’s tuned `globals.css` | **Deliberately not adopted** (I4) — Radix frame + incremental parser were adopted |
-| ⚪ **Info** | **Lighthouse not re-run this PAD** | No render-path change beyond additive CSS/a11y; pass-2 baseline (90/100/96) stands | **Deferred** (I5) until next perf pass |
+| ⚪ **Info** | **`workspace-polish.css` adoption revisited (pass 6)** | The pass-1/4 objection targeted the old layer; the current sample-build layer is additive on an identical `globals.css`, fixes the welcome-contrast dip, and was verified class-by-class against this app's markup | **Adopted in pass 6** (see `docs/CODE_REVIEW_REPORT.md`) |
+| ⚪ **Info** | **Lighthouse not re-run this PAD** | Pass 6 changed the render path (editorial mint layer: body font, layout metrics) — the pass-2 baseline (90/100/96) no longer applies | **Deferred** (I5) — re-baseline in the next perf pass |
 | ⚪ **Info** | **`npm prune` unscheduled** | Cookie expiry alone does not delete DB data | **Operator — schedule weekly cron** (` --idle-days 30 [--conversation-days 90]`) (I6) |
 | ⚪ **Info** | **Two session artifacts now tracked** (`docs/session_1.md`, `docs/recent_code_changes_to_validate.txt` added at `9db90b2`) | Worklog + pull transcript preserved for audit trail | **Tracked as evidence** — delete if unwanted |
 | ⚪ **Info** | **`db-init-and-e2e-plan.md` added** (post-rebuild evidence) | Plan + evidence for `5433` rebuild (`[✓] migrations`, `{inserted:1→0}`, 662 ms build, 3004 16 passed) | **Tracked** — keep as runbook or archive |
@@ -851,7 +851,7 @@ curl http://localhost:3000/api/health  # {"ok":true}
 | `src/lib/server.ts` | ~150 | Cookie session (64-hex→SHA-256), `assertOrigin` (proxy-aware), `readJson` 3 MB, `errorResponse` (curated copy + requestId), `setSession` Strict Secure |
 | `src/lib/origin.ts` | 21 | Pure `isSameOriginRequest` — `Host` OR first `x-forwarded-host`, reject `cross-site`/malformed/non-http(s) |
 | `src/lib/validation.ts` | ~50 | All zod schemas — `chatInputSchema` 16k + image + settings strict, `titleSchema` 1–100, `providerChunkSchema` with `reasoning_content` |
-| `src/lib/sse.ts` | ~80 | Incremental `SSEParser` — LF/CRLF/CR, split-CRLF `skipLF`, exactly-one-space `data:`, 1M limits, shared server+client |
+| `src/lib/sse.ts` | ~80 | Incremental `SSEParser` — LF/CRLF/CR, split-CRLF `skipLF`, exactly-one-space `data:`, validated configurable size bound (1M default/provider, 8M browser), shared server+client |
 | `src/lib/types.ts` | ~40 | `ChatMessage`, `ConversationSummary`, `ChatSettings`, `defaultSettings` |
 | `src/lib/retention.ts` | ~50 | Pure `pruneIdleSessions` / `pruneStaleConversations` — injected `{db,tables,options}` |
 | `src/db/schema.ts` | ~45 | Drizzle `chat_sessions` + `conversations` (JSONB, FK cascade, index) |
