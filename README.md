@@ -106,8 +106,10 @@ Requirements: **Node.js ≥ 22** and a **PostgreSQL** database.
   npm ci
   cp .env.example .env   # DATABASE_URL="postgresql://chat_user:chat_secret@127.0.0.1:5433/chat_db"
   docker compose up -d   # PostgreSQL 17 on 127.0.0.1:5433 (chat_user/chat_secret, dev only)
-  npm run db:migrate     # apply drizzle/*.sql (or db:generate first if the schema changed)
-  npm run db:seed        # optional, idempotent demo row on a fresh database
+  npm run db:setup       # one-command: migrate + seed (curated errors + JSON summary)
+  # or step-by-step:
+  npm run db:migrate     # apply drizzle/*.sql (logs hash/sessions; idempotent — same [✓] for fresh and no-op)
+  npm run db:seed        # idempotent demo row (logs inserted/reason/sessions)
   npm run dev
   curl http://localhost:3000/api/health  # {"ok":true}
 
@@ -207,7 +209,7 @@ Latest verification (2026-09-10, audit pass 3): typecheck, lint, build, 15/15 un
 | Live-deployment E2E | `tests/live-site.spec.ts` (env-gated via `LIVE_SITE_URL`) validates a deployed instance end to end |
 | CI | `.github/workflows/ci.yml` runs secret scan → typecheck → lint → unit → build → prod audit, plus E2E against a PostgreSQL service container |
 | HSTS | `Strict-Transport-Security: max-age=63072000; includeSubDomains` added app-side (enforced by TLS ingress) |
-| Database lifecycle | `drizzle.config.ts` reads `DATABASE_URL` (no hard-coded sandbox URL), `npm run db:generate` → `drizzle/*.sql`, `npm run db:migrate` (production-safe), `npm run db:seed` (idempotent local seed) |
+| Database lifecycle | `drizzle.config.ts` reads `DATABASE_URL` (no hard-coded sandbox URL), `npm run db:generate` → `drizzle/*.sql`, `npm run db:migrate` (production-safe, logs `hash/sessions`), `npm run db:seed` (idempotent, logs `reason/sessions`), `npm run db:setup` (migrate+seed, `migrationsApplied/inserted` summary, curated `PostgreSQL not reachable` preflight) |
 
 ## Design system
 
@@ -228,6 +230,8 @@ Latest verification (2026-09-10, audit pass 3): typecheck, lint, build, 15/15 un
 | Issue | Solution |
 |-------|----------|
 | App fails to start: `DATABASE_URL is required` | Set `DATABASE_URL` in `.env` or the server environment, then restart |
+| `npm run db:migrate` / `db:seed` / `db:setup` → `PostgreSQL not reachable at DATABASE_URL` | PostgreSQL is down or `DATABASE_URL` points at the wrong host/port. Run `docker compose up -d` and `curl /api/health`; check `DATABASE_URL` matches `docker-compose.yml` (`5433:5432`, `chat_user/chat_secret`) |
+| `npm run db:seed → {"inserted":0,"reason":"already seeded"}` | Not a failure — the DB already has sessions. `inserted:1` only on a fresh DB (`docker compose down -v && up -d && npm run db:setup` → `1/1`). Same for `db:migrate`'s `[✓]` — it appears for both fresh apply and fast no-op (check the logged `hash/sessions` to distinguish) |
 | `/api/health` returns `{"ok":false}` (HTTP 500) while the page still loads | The app cannot reach PostgreSQL. Check that the database behind `DATABASE_URL` is running, reachable from the server, and accepts the configured credentials; restart the app after fixing. The UI renders but sessions/conversations fail until this is green |
 | “Connect NVIDIA…” banner on send | Add `NVIDIA_API_KEY` to the **server** environment and restart; the UI works without it |
 | 429 “A response is already running” | One generation per session is enforced; wait a moment and retry |

@@ -21,8 +21,9 @@ Next.js 16 (App Router) chat workspace "Kimi" — streamed NVIDIA NIM responses 
 | Live-deployment E2E (skipped unless `LIVE_SITE_URL` is set) | `LIVE_SITE_URL=https://host npx playwright test tests/live-site.spec.ts` |
 | Prune idle sessions / stale conversations | `npm run prune -- --idle-days 30 [--conversation-days 90]` |
 | Generate SQL migration from schema | `npm run db:generate` |
-| Apply SQL migrations (production-safe) | `npm run db:migrate` |
-| Seed a fresh database (idempotent) | `npm run db:seed` |
+| Apply SQL migrations (production-safe) | `npm run db:migrate` (wrapper logs `hash/sessions/conversations` + curated `PostgreSQL not reachable` on failure) |
+| Seed a fresh database (idempotent) | `npm run db:seed` (logs `inserted/reason/sessions`) |
+| Migrate + seed in one (cold-start) | `npm run db:setup` (migrate + seed, single summary, curated errors) |
 | Apply schema to dev database (prototyping) | `npx drizzle-kit push` |
 
 Verification order: `npm run typecheck` → `npm run lint` → `npm test` → `npm run build`. The typecheck script runs `next typegen` before `tsc --noEmit`, so route-type generation can never be skipped.
@@ -42,7 +43,8 @@ Verification order: `npm run typecheck` → `npm run lint` → `npm test` → `n
 - `src/lib/origin.ts` — pure same-origin gate shared by every write endpoint: accepts the origin when it matches `Host` OR the first `x-forwarded-host` value (trusted-ingress convention); rejects `sec-fetch-site: cross-site`, malformed origins, and non-http(s) schemes. Kept free of Next/DB imports so the unit suite can run it anywhere.
 - `src/lib/server.ts` — cookie session (`kimi_session`, 64-hex token; only the SHA-256 digest is stored as `owner`), `assertOrigin` (same-origin writes), bounded `readJson` (3 MB), `errorResponse` (structured logs without PII).
 - `src/lib/retention.ts` — pure prune functions taking `{ db, tables, options }` (no relative runtime imports so the node type-stripping CLI can load them). `scripts/prune-expired.mjs` is the CLI wrapper (`npm run prune`).
-- `src/db/seed.ts` + `scripts/seed.mjs` — idempotent local-dev seed (no PII, safe to re-run). Injected `{ db, tables }` so the CLI stays alias-free and type-strippable.
+- `src/db/seed.ts` + `scripts/seed.mjs` — idempotent local-dev seed (no PII, safe to re-run). Injected `{ db, tables }` so the CLI stays alias-free and type-strippable. CLI logs `{inserted, reason, sessions}` and a curated `PostgreSQL not reachable` on ECONNREFUSED.
+- `scripts/migrate.mjs` + `scripts/db-setup.mjs` — wrappers for `db:migrate` / `db:setup`. Preflight `DATABASE_URL` + `select 1` with curated JSON errors; post-migrate they log `{hash, sessions, conversations}` / `{migrationsApplied, inserted}` so the fast no-op spinner (`[✓]`) is self-explanatory.
 - `src/lib/validation.ts` — all zod schemas, shared by server and unit tests.
 - `src/lib/sse.ts` — SSE parser handling LF/CRLF/CR separators, events split across network chunks, and multi-line data with incremental size limits; used by BOTH the API route and the browser client. Changes affect both sides.
 - `src/components/chat-workspace.tsx` — the entire client UI (single component, ~1500 lines). Client-side zod schemas validate every API and stream payload.

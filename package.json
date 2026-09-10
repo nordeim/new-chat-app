@@ -10,8 +10,9 @@
     "test": "node --experimental-strip-types --test tests/*.test.mjs",
     "test:e2e": "playwright test",
     "db:generate": "drizzle-kit generate",
-    "db:migrate": "drizzle-kit migrate",
+    "db:migrate": "node --experimental-strip-types scripts/migrate.mjs",
     "db:seed": "node --experimental-strip-types scripts/seed.mjs",
+    "db:setup": "node --experimental-strip-types scripts/db-setup.mjs",
     "prune": "node --experimental-strip-types scripts/prune-expired.mjs"
   },
   "dependencies": {
