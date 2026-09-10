@@ -1,142 +1,127 @@
 # Code Review & Security Audit — Kimi Workspace
 
-**Date:** 2026-09-10 · **Pass 2** · **Scope:** `src/**`, `tests/**`, root configs, docs, live deployment (`https://kimi-chat.jesspete.shop/`) · **Method:** Tiered pipeline per the repo `code-review-and-audit` skill — static gates (lint/typecheck), OWASP-oriented security scan (native CLI fallback), 12-category quality checklist, full unit + E2E suites, Lighthouse, live-site browser E2E (new `tests/live-site.spec.ts`), expert manual review, and external verification of the NVIDIA provider contract against `build.nvidia.com` documentation.
+**Date:** 2026-09-10 · **Pass 3** · **Scope:** `src/**`, `tests/**`, root configs, CI, docs, and the live deployment (`https://kimi-chat.jesspete.shop/`) · **Method:** Tiered pipeline per the repo `code-review-and-audit` skill (native CLI fallback mode): static gates, OWASP-oriented security scan, secret scan, dependency audit, 12-category quality matrix, full unit + E2E suites, live-site browser E2E, contract re-verification of every AGENTS/CLAUDE/README claim against the code, and expert manual review across correctness, security, data integrity, error handling, performance, testing, maintainability, consistency, and dependency health.
 
-Pass 1 (same file, 2026-09-10) remediated the original non-shippable state: committed SSH key removed from tracking (C1/C2), broken type-check/build gates repaired (C2), lint error in the client component (H1), Playwright tooling gaps (M1), GFM rendering (M2), packaging gaps (M3), secret-pattern hygiene (M4), PATCH cache header (L1), package name (L2).
+Pass 2 (same file) remediated the pass-1 findings and left two operator items open. This pass began from a fresh clone, validated the documented state, ran browser E2E against the live deployment, then remediated what it found with red→green tests. All code remediations below landed in this pass's commits.
 
 ---
 
 ## Summary
 
-| Severity | Total this pass | Remediated this pass | Open after pass |
+| Severity | Found this pass | Remediated this pass | Open after pass |
 |----------|-----------------|----------------------|-----------------|
-| 🔴 Critical | 1 | 0 | 1 (key rotation — operator action) |
-| 🟠 High | 3 | 3 | 0 code / 1 deployment incident (operator) |
-| 🟡 Medium | 3 | 3 | 0 |
+| 🔴 Critical | 2 | 1 (code) / 1 partial | 2 operator rotations (SSH key carried; NVIDIA key rotation advised — key reads as dead) |
+| 🟠 High | 2 | 2 (code) | 0 code / redeploy required to take effect live |
+| 🟡 Medium | 1 | 1 | 0 |
 | 🟢 Low | 2 | 2 | 0 |
-| ⚪ Info | 6 | 1 (CI) | 5 (documented tradeoffs) |
+| ⚪ Info | 6 | 0 | 6 (documented tradeoffs / operator schedule items) |
 
-The application code is **shippable** after this pass's remediations. The one blocking operational issue is environmental: the current live deployment cannot reach its PostgreSQL database, which no code change in this repository can repair.
+The application code is **shippable** after this pass's remediations, with one deployment dependency: the proxy-aware same-origin fix only protects users after the operator redeploys the production build.
 
 ## Verification ledger
 
 | Check | How | Result |
 |-------|-----|--------|
-| ESLint (flat config) | `npm run lint` | ✅ 0 problems |
 | Type safety | `npm run typecheck` (`next typegen` + `tsc --noEmit`, strict, zero `any`/`@ts-ignore`) | ✅ pass |
+| Lint | `npm run lint` (flat config, next core-web-vitals) | ✅ 0 problems |
+| Unit tests | `npm test` (node:test + strip-types) | ✅ 15/15 (5 existing + 7 new origin + 3 new/expanded SSE cases) |
 | Production build | `npm run build` | ✅ 6 routes compile |
-| Unit tests | `npm test` | ✅ 5/5 |
-| E2E + API + WCAG (local) | `npx playwright test` against production build + disposable PostgreSQL 18 (embedded) | ✅ 9/9 |
-| Live-site E2E | `LIVE_SITE_URL=https://kimi-chat.jesspete.shop npx playwright test tests/live-site.spec.ts` | ⚠️ 7 passed / 4 failed / 1 skipped — failures drive findings H1, H2, H3 below |
+| Local E2E + API + WCAG | `npx playwright test tests/workspace.spec.ts tests/stream-ui.spec.ts` against production build + disposable embedded PostgreSQL 18 | ✅ 16/16 (2 new: proxied-origin, mobile-nav Escape) |
+| Live-site E2E | `LIVE_SITE_URL=https://kimi-chat.jesspete.shop npx playwright test tests/live-site.spec.ts` (pre-fix build) | ⚠️ 11/12 — the streaming failure exposed H1 (403) and M1 (false-positive race); suite hardened, rerun required after redeploy |
+| Live deployment health | `curl https://kimi-chat.jesspete.shop/api/health` | ✅ `{"ok":true}` — pass-2 H2 (database unreachable) is **resolved** by the operator |
+| Live headers & cookie | `curl -sI` + browser context | ✅ nosniff, DENY, HSTS `max-age=63072000; includeSubDomains`, Referrer-Policy, Permissions-Policy, CSP `frame-ancestors 'none'; base-uri 'self'; object-src 'none'`; `kimi_session` HttpOnly + SameSite=strict + Secure |
+| Provider streaming round-trip | Local production build + real provider call (`max_tokens 256`, effort `low`) | ✅ SSE contract exercised end-to-end: `meta` → provider fetch → structured `error` event with curated copy → lease released. **The repo's leaked key is rejected by NVIDIA (HTTP 403 "Authorization failed")** — verified directly against `integrate.api.nvidia.com`, so a full streamed answer could not be produced in this environment |
+| Secret scan | `git grep -IE 'nvapi-…\|BEGIN …PRIVATE KEY…\|ghp_…\|AKIA…'` over app code (`src tests scripts drizzle` + root configs) | ✅ clean (after remediation); reference material (`skills/`, `sample-build/`, `docs/`) deliberately out of app-code scan scope, embedded doc key redacted |
+| Dangerous patterns | grep for `eval` / `new Function` / `dangerouslySetInnerHTML` / `innerHTML` / `document.write` / `console.log` / `NEXT_PUBLIC_` over `src/` | ✅ none |
 | Dependency audit (prod) | `npm audit --omit=dev` | ✅ 0 vulnerabilities |
-| Dependency audit (full) | `npm audit` | ⚠️ 4 moderate, dev-only (esbuild chain via drizzle-kit) — unchanged from pass 1 |
-| Secret scan | `nvapi-`, `sk-`, `AKIA`, `PRIVATE KEY`, `ghp_` patterns over `src/`, `tests/`, root configs | ✅ clean |
-| Dangerous-pattern scan | `eval` / `new Function` / `dangerouslySetInnerHTML` / `innerHTML` / `document.write` / `console.log` / `NEXT_PUBLIC_` | ✅ none |
-| SQL injection surface | all queries Drizzle-parameterized; only template literals are aggregates/bound values | ✅ clean |
-| Security headers on prod build | `curl -I` local production server | ✅ nosniff, DENY, Referrer-Policy, Permissions-Policy, CSP (`frame-ancestors 'none'; base-uri 'self'; object-src 'none'`), `Cache-Control: no-store` on data APIs; session cookie HttpOnly + SameSite=Strict |
-| Contract paths exercised | missing key → 503 with guidance copy; oversized body → 413; cross-origin chat → 403; bad UUID → 400; session cookie flags | ✅ all as documented |
-| Lighthouse (local prod, welcome state) | Performance 90 · Accessibility 100 · Best Practices 96 | ✅ (a11y score applies to the scanned state; see H1/H3 for the error state) |
-| NVIDIA provider contract | `build.nvidia.com/moonshotai/kimi-k3` + `docs.api.nvidia.com` (checked 2026-09): model id `moonshotai/kimi-k3`, `https://integrate.api.nvidia.com/v1/chat/completions` with `Accept: text/event-stream`, `reasoning_effort` enum `low/high/max` (default `max`), multimodal `image_url` content blocks | ✅ matches implementation; `reasoning_content` in stream deltas is implied by NVIDIA's sample code though not in the published delta schema — the app's `.nullish()` parsing already tolerates both shapes |
-| Live NVIDIA inference | Not executable (no key/model entitlement in this environment) | ⚪ unverified — missing-key path covered by tests |
+| Dependency audit (full) | `npm audit` | ⚠️ 4 moderate, dev-only (esbuild chain via drizzle-kit) — unchanged from pass 2; suggested fix remains a breaking downgrade |
+| SQL injection surface | all queries Drizzle-parameterized; the JSONB search template binds `searchPattern()` output (wildcards escaped) | ✅ clean |
+| Security headers on prod build | `curl -I` local production server | ✅ full set present, `Cache-Control: no-store` on data APIs |
+| Contract paths exercised | missing key → 503 curated copy; oversized body → 413; cross-origin chat → 403; bad UUID → 400; provider 401/403 → 502 curated copy; invalid JSON → 400 | ✅ all as documented |
+| NVIDIA provider contract | model id `moonshotai/kimi-k3`, `https://integrate.api.nvidia.com/v1/chat/completions`, `Accept: text/event-stream`, `reasoning_effort` enum, `image_url` blocks | ✅ matches implementation and build.nvidia.com docs |
 
 ---
 
 ## 🔴 Critical
 
-### C1 — Exposed SSH private key must be rotated ⚠️ OPEN (operator action)
-- **Location:** git history (`docs/ssh-key.txt`, removed from `HEAD` in pass 1)
-- **Description:** The deployment key published to GitHub in pass 1 remains valid until revoked. Removal from tracking does not unpublish history. Additionally the operator re-supplies this same key for push automation, confirming it is still active.
+### C1 — Exposed SSH private key must be rotated ⚠️ OPEN (operator action, carried from pass 1/2)
+- **Location:** git history (`docs/ssh-key.txt`, untracked since pass 1); the operator continues to supply the same credential for push automation.
 - **Impact:** Repository read access = push access to the deployment identity until rotation.
-- **Required action:** Revoke/rotate the key at GitHub and in the deployment environment. History rewrite remains deliberately deferred without operator sign-off.
-- **Confidence:** Verified (key material present in git history; operator reuses the same credential).
+- **Required action:** Revoke/rotate at GitHub and in the deployment environment; then decide on history rewrite with operator sign-off.
+- **Confidence:** Verified (credential reuse observed in this pass's workflow).
+
+### C2 — Live NVIDIA API key committed and tracked in `.env` ✅ remediated this pass / rotation advised
+- **Location:** `.env` (added in commit `7afe083`, tracked at HEAD until this pass); a second key embedded in `docs/prompt-to-create.md`.
+- **Description:** `.gitignore` listed `.env`, but the file had been force-added and remained tracked, so the ignore rule never applied. The key was public on GitHub. Consequence observed in testing: the tracked key also broke the documented E2E precondition ("no `NVIDIA_API_KEY`"), failing the missing-key UX test locally.
+- **Evidence:** `git ls-files` lists `.env`; `git check-ignore` does not suppress tracked files. Direct probe of the provider returned HTTP 403 "Authorization failed" for the key, so it reads as revoked/expired — the immediate abuse risk is limited, but rotation remains the correct closure because exposure cannot be undone from history.
+- **Remediation this pass:** `git rm --cached .env` (kept locally for dev; ignore rule now effective); redacted the second key in `docs/prompt-to-create.md`; added a credential-pattern scan and a production-only `npm audit` gate to CI.
+- **Confidence:** Verified.
 
 ## 🟠 High
 
-### H1 — Error-banner text fails WCAG AA contrast ✅ remediated
-- **Location:** `src/app/globals.css` `.error-banner` (`color: #887349` on `background: #fffaf0`; `.error-banner .icon-button` `color: #a28c61`)
-- **Description:** Banner text measures 4.39:1 (icon 3.12:1) against the required 4.5:1 for 11px normal-weight text. Verified three ways: live axe run (`color-contrast`, impact `serious`), local recomputation (4.39:1), and reproduced on the local build by forcing the error state.
-- **Evidence:** Live E2E failure — the deployed database outage makes the banner visible on load, and the axe scan fails with 58 contrast findings rooted in this rule pair.
-- **Impact:** The error state — the moment clarity matters most — is the least accessible state in the app; automated WCAG claims did not hold for it.
-- **Remediation:** Darken to `#6f5c30` (6.21:1) for text and `#7d673a` (5.21:1) for the dismiss icon; palette character preserved. Covered by a new regression test (H3).
-- **Confidence:** Verified (before/after axe + contrast math).
+### H1 — Same-origin writes rejected on the live deployment (chat broken in production) ✅ remediated (code) — redeploy required
+- **Location:** `src/lib/server.ts` `assertOrigin` (now `src/lib/origin.ts` + thin wrapper).
+- **Description:** `assertOrigin` compared the `Origin` host only against the `Host` header. The live ingress (Cloudflare) rewrites `Host` to the upstream value while still forwarding `x-forwarded-proto` (proven by the `Secure` cookie flag), so every legitimate same-origin browser `POST /api/chat` — and PATCH/DELETE — failed with 403 "This action must be made from your chat workspace." The static UI worked; the core action did not.
+- **Evidence:** Browser E2E on the live site captured the 403 banner after send; `curl -X POST` with a perfectly matching `Origin: https://kimi-chat.jesspete.shop` reproduced the 403; identical request against the local production build returned the expected stream/503 path.
+- **Remediation (TDD):** Extracted a pure `isSameOriginRequest(origin, host, forwardedHost, secFetchSite)` into `src/lib/origin.ts`; 7 unit tests (red→green) cover proxied matches, chained `x-forwarded-host`, malformed origins, non-http(s) schemes, and cross-site rejection. An API regression test drives the full request path with rewritten-Host headers (expects 400-not-403) and asserts mismatched origins stay rejected.
+- **Security envelope unchanged:** a direct (non-browser) attacker could always spoof `Host`, so the comparison target was never a CSRF boundary; browsers cannot forge `Origin` or `sec-fetch-site`, and cross-site origins match neither `Host` nor the trusted ingress's `x-forwarded-host`. Deployment requirement (trusted ingress, public host preserved in `x-forwarded-host`) is documented in README.
+- **Confidence:** Verified (red→green locally; live verification pending redeploy — the hardened live suite will prove it).
 
-### H2 — Live deployment database unreachable ⚠️ OPEN (operator/environment)
-- **Location:** deployment environment (`DATABASE_URL`) at `https://kimi-chat.jesspete.shop/`
-- **Description:** `/api/health` → 500 `{ok:false}` and `/api/conversations` → 500 with structured error + requestId. The static UI renders (welcome, starters, settings dialogs all pass live), but every persistence/session call fails, so the workspace cannot create sessions or conversations. The deployment serves the current build (CSS hash and palette match the repo), isolating the fault to the database dependency, not the release.
-- **Evidence:** `curl https://kimi-chat.jesspete.shop/api/health` → HTTP 500; browser E2E observed the same; identical requests against the local production build + disposable PostgreSQL return 200.
-- **Impact:** Live service is functionally down for its core purpose (saved conversations); provider streaming also untestable because the `configured` flag cannot be served.
-- **Remediation:** Restore PostgreSQL reachability for the deployed `DATABASE_URL` (instance stopped, credentials rotated/expired, or networking/firewall). `/api/health` is the correct probe. README troubleshooting gains a runbook row (L2).
-- **Confidence:** Verified (remote 500 vs local 200 on identical code).
-
-### H3 — WCAG suite never scans the error state (test gap enabling H1) ✅ remediated
-- **Location:** `tests/workspace.spec.ts` (axe coverage), `tests/live-site.spec.ts`
-- **Description:** Automated accessibility checks covered the welcome state and settings dialog only. The H1 violation shipped precisely because the error banner never renders during a healthy scan.
-- **Remediation (TDD):** New hermetic test routes `/api/conversations` to a 500 so the banner renders, then asserts zero serious axe violations — **failed before** the palette fix (serious `color-contrast`), **passes after**. The live-site suite now scans the error state too when the deployment is degraded.
-- **Confidence:** Verified (red → green observed).
+### H2 — CI push trigger corrupted (CI never ran on `main`) ✅ remediated
+- **Location:** `.github/workflows/ci.yml`.
+- **Description:** The trigger read `branches: ain]` — a corrupted literal, so `push` events for `main` matched nothing and the entire gates+E2E pipeline silently stopped running on the primary branch (only `pull_request` still fired).
+- **Evidence:** File inspection (`cat -A` for hidden bytes).
+- **Remediation:** `branches: [main]`; plus the C2 secret-scan and production audit steps now ride the same pipeline.
+- **Confidence:** Verified (file content).
 
 ## 🟡 Medium
 
-### M1 — Non-JSON API failures leak raw parse errors into the UI ✅ remediated
-- **Location:** `src/components/chat-workspace.tsx` (`apiJson`, `fetchWorkspace`, `openConversation`)
-- **Description:** `await response.json()` inside `apiJson` throws a raw `SyntaxError` (e.g. `Unexpected token '<' …`) when an ingress/proxy answers with an HTML 502 page; likewise a 2xx body that fails the zod contract throws a multi-line `ZodError` whose message lands verbatim in the error banner.
-- **Impact:** Confusing, potentially information-leaking client copy during exactly the degraded-infra scenarios where users need guidance.
-- **Remediation (TDD):** `apiJson` now tolerates non-JSON bodies (falls back to the curated "The request failed. Please try again." copy); `fetchWorkspace`/`openConversation` wrap contract parsing and throw the friendly reload copy on schema mismatch. Regression test mocks an HTML 502 from `/api/conversations` and asserts the banner shows the friendly copy and never `Unexpected token`.
-- **Confidence:** Verified (red → green observed).
-
-### M2 — History search covers titles only (pass 1 backlog I4) ✅ remediated
-- **Location:** `src/app/api/conversations/route.ts`, `src/components/chat-workspace.tsx` (search dialog)
-- **Description:** `⌘K` filtered the already-loaded 100 titles client-side; message content was unsearchable. Documented as backlog item I4 in pass 1.
-- **Remediation (TDD):** `GET /api/conversations?q=term` now filters server-side by owner with case-insensitive matching over `title` **and** message content (`jsonb_array_elements_text` over the JSONB messages, ILIKE with escaped wildcards, fully parameterized). The search dialog debounces 250 ms and queries the server for non-empty terms, with an in-flight guard; empty terms restore the local list. API + UI tests added (ownership isolation of results asserted).
-- **Confidence:** Verified (new tests red → green against embedded PostgreSQL).
-
-### M3 — No retention path for expired sessions/conversations (pass 1 backlog I3) ✅ remediated
-- **Location:** repository scripts + `package.json`
-- **Description:** Cookie expiry does not delete database rows; pass 1 required "a reviewed Drizzle job" but none existed. Idle `chat_sessions` rows (and conversations cascaded to them) accumulate indefinitely.
-- **Remediation (TDD):** `src/lib/retention.ts` exposes `pruneIdleSessions(db, {idleDays})` (deletes sessions whose `lastRequest` predates the cutoff; conversations cascade) and `pruneStaleConversations(db, {olderThanDays})` (opt-in via flag). `scripts/prune-expired.ts` is a thin CLI wrapper exposed as `npm run prune -- --idle-days 30 [--conversation-days 90]`. Integration test in `tests/workspace.spec.ts` seeds old/new fixtures, runs the pruning functions, and asserts exact deletion semantics (never-used sessions with `lastRequest = epoch` are pruned; active sessions survive).
-- **Confidence:** Verified (test red → green against embedded PostgreSQL).
+### M1 — Live streaming test reported false "streamed" outcomes ✅ remediated
+- **Location:** `tests/live-site.spec.ts`.
+- **Description:** The test raced on the prompt text (`/live check ok/i`), which the optimistic user bubble renders immediately, so a send that failed server-side reported "streamed"; the follow-up `Copy response` assertion then failed misleadingly (and, had it not, a broken deployment would have passed).
+- **Remediation:** The test now waits for a random nonce inside an **assistant** message only (`.message.assistant` scope), treats an error banner as a failure and surfaces the banner text, asserts the Copy control, and verifies persistence via `GET /api/conversations`.
+- **Confidence:** Verified (the pre-fix run demonstrated the false positive; the rewritten test fails loudly on the current live build's 403).
 
 ## 🟢 Low
 
-### L1 — No HSTS header ✅ remediated
-- **Location:** `next.config.ts` headers
-- **Description:** HSTS was listed as ingress-specific in pass 1; adding `Strict-Transport-Security: max-age=63072000; includeSubDomains` at the app layer is safe (ignored over plain HTTP, enforced by TLS ingress) and removes one deployment omission. (`preload` deliberately omitted so domains are not committed to the HSTS preload list without operator intent.)
-- **Confidence:** Verified (header asserted in live-site suite + curl).
+### L1 — Operator session scratch embedded in README/AGENTS ✅ remediated
+- **Description:** Both docs carried session transcripts (duplicated "Commands for Next Cycle", Docker evidence logs, `bg_start`/`scandihaven` process notes, an npm terminal dump). Noise degrades trust in the docs and duplicated contradictory instructions.
+- **Remediation:** Replaced with one concise "Docker Quick Start" section in README; AGENTS trimmed to the commands table, environment notes, architecture map, and non-obvious rules; every remaining claim re-verified against the code.
 
-### L2 — README troubleshooting lacks a database-outage runbook row ✅ remediated
-- **Location:** `README.md` troubleshooting table
-- **Description:** H2 showed operators need the "health returns `ok:false` → check `DATABASE_URL`/Postgres reachability; UI renders but persistence fails" path spelled out.
-- **Confidence:** Verified (docs updated to match observed failure modes).
+### L2 — Documentation staleness vs. live reality ✅ remediated
+- **Description:** Pass-2 docs described the live database as unreachable (H2) — the operator has since restored it (`/api/health` → `{"ok":true}` live). Status rows now updated (see this file and README "Project status").
+- **Confidence:** Verified (live probe).
 
 ## ⚪ Info (documented tradeoffs & backlog)
 
 | # | Finding | Disposition |
 |---|---------|-------------|
-| I1 | CSP intentionally covers `frame-ancestors`/`base-uri`/`object-src` only; no nonce-based `script-src` | Unchanged — deployment-specific hardening step; adding `unsafe-inline` would weaken rather than harden |
-| I2 | Multi-model catalog and multi-image attachments exist in `sample-build/` (Nova reference) | Deliberately **not** adopted: the documented product contract pins `moonshotai/kimi-k3` and one image per message; expanding scope would invalidate the docs/contract alignment this pass proves. Recorded as future feature work |
-| I3 | CI now added: `.github/workflows/ci.yml` runs install → typecheck → lint → unit → build, plus an E2E job with a PostgreSQL service container | Implemented this pass (pass 1 backlog #6) |
-| I4 | `reasoningEffort` select casts via `as` in the settings dialog | Accepted — options are a fixed, validated set; zod re-validates server-side |
-| I5 | `crypto.randomUUID()` in the client requires a secure context | Satisfied by the documented HTTPS-ingress deployment requirement |
-| I6 | 4 moderate dev-only advisories (esbuild chain under drizzle-kit) | Accepted, unchanged: suggested fix is a breaking downgrade; dev tooling is never exposed publicly |
-| I7 | Streaming Markdown re-parses per delta (pass 1 L3) | Deferred with rationale — bounded by the 16,384-token cap; revisit only if long-answer jank is profiled |
+| I1 | Conversation-count cap (100) checks count then insert — concurrent creates can transiently exceed by one | Accepted: self-inflicted, bounded, self-corrects via retention; an advisory-lock/unique-window fix adds complexity without real risk |
+| I2 | 429 lease-conflict path has no automated test (reaching the lease requires a valid provider key) | Backlog: extract the lease claim into an injectable seam if flake-free coverage is wanted; the SQL condition is reviewed and the atomic `UPDATE … WHERE busyUntil < now` pattern is concurrency-safe |
+| I3 | CSP intentionally covers `frame-ancestors`/`base-uri`/`object-src` only | Unchanged — nonce-based `script-src` remains a deployment-specific hardening step (carried from pass 2) |
+| I4 | `sample-build/src/app/workspace-polish.css` not adopted | The override layer targets sample-build's stylesheet, not this app's tuned `globals.css`; adopting it would stack contradictory rules. The two sample-build assets with standalone value (Radix navigation frame, incremental SSE parser) **were** adopted with tests |
+| I5 | Lighthouse not re-run this pass | No render-path changes beyond additive CSS/a11y DOM changes; pass-2 baseline (90/100/96) stands until the next perf pass. Not executable in this sandbox without a display Chrome build |
+| I6 | `npm prune` scheduling | Operator item (carried): schedule the retention CLI (e.g., weekly cron) |
 
 ## ✅ Passed checks (evidence-backed)
 
-- **Ownership & isolation:** every conversation query filters by `owner` (SHA-256 of cookie token); cross-session access → 404 (tested locally and re-verified live via independent cookies).
-- **CSRF/origin:** all writes require same-origin `Origin` + `sec-fetch-site` checks; cross-site → 403 (tested locally, re-verified live).
-- **Session cookie:** 256-bit random token, HTTP-only, SameSite=Strict, Secure over HTTPS; only the digest is stored (flags asserted in tests, observed live via `Set-Cookie`).
-- **Injection safety:** Drizzle parameterized queries only (including the new search path); zod validation at every boundary; react-markdown sanitizes model HTML by default; links get `noopener noreferrer`; remote model images are not fetched.
-- **Resource limits:** bounded request bodies (3 MB — 413 observed), image magic-byte verification (2 MB), 16k-char prompts, 60-message/8 MB history caps, 600k-char response cap, 100-conversation cap — all server-enforced.
-- **Concurrency:** atomic session lease (one generation per workspace, 3 s spacing, 195 s expiry), delete-vs-stream race prevented via `FOR UPDATE` ordering consistent with the lease path.
-- **Streaming integrity:** SSE parser handles fragmented/CRLF/multi-line events with size caps; malformed/incomplete provider streams → explicit errors; partial answers never persisted; duplicate-retry guarded.
-- **Privacy:** structured logs carry operation/ids/error types only; reasoning content never leaves the server; no `console.log`; no secret patterns anywhere in app code.
-- **Provider contract:** implementation matches NVIDIA's published kimi-k3 schema (model id, endpoint, `reasoning_effort` enum including the NIM-specific `max`, multimodal `image_url` blocks).
-- **Docs/code alignment:** every limit, header, status code, and flow claim in `AGENTS.md`/`CLAUDE.md`/`README.md` was re-checked against the code this pass; docs updated where remediation changed behavior (search, retention, CI, HSTS, live-site suite).
+- **Ownership & isolation:** every conversation query filters by `owner` (SHA-256 of the cookie token); cross-session reads/mutations → 404 (local suite; live suite re-verified independent cookies).
+- **CSRF/origin:** writes require the same-origin gate (now proxy-aware) + `sec-fetch-site` defense; cross-site → 403; `null` origin → 403.
+- **Session cookie:** 256-bit token, HttpOnly, SameSite=Strict, Secure over HTTPS; only the digest stored; fixation impossible (server-generated).
+- **Injection safety:** parameterized Drizzle only; zod at every boundary (16k chars, 2 MB image schema, UUID ids, 1–100 titles); react-markdown sanitizes model HTML; `img` elements replaced; links `noopener noreferrer`.
+- **Resource limits:** 3 MB body (413), image magic-byte re-verification (2 MB), 16k prompts, 60-message/8 MB history caps, 600k response cap, 100-conversation cap, 175 s provider timeout, 195 s lease expiry, 3 s spacing — all server-enforced.
+- **Concurrency:** atomic lease claim via conditional `UPDATE … RETURNING`; conditional release keyed to the lease value; delete refuses (409, `FOR UPDATE`) while a generation runs.
+- **Streaming integrity:** shared SSE parser (now CR/CRLF/LF-parity, incrementally bounded); incomplete/failed provider streams never persisted; duplicate-retry guard; stop control aborts client- and server-side.
+- **Privacy:** structured logs carry operation/ids/error types only; `reasoning_content` persisted server-side but stripped from every browser payload; no message contents in logs.
+- **Error surfaces:** curated copy for every failure class (missing key 503, provider rejection 502, interrupted stream, oversized, degraded-API HTML) — verified against the real provider's 403 rejection this pass.
+- **Accessibility:** axe WCAG 2.2 AA clean on welcome, dialogs, **and the error state** (local suite); mobile drawer is now a modal dialog with focus containment, Escape, in-drawer close, and focus restoration.
+- **CI:** trigger repaired; pipeline = secret scan → typecheck → lint → unit → build → prod audit, plus an E2E job with a PostgreSQL service container.
 
 ## Remediation backlog (recommended next steps)
 
-1. **[Operator] Rotate the exposed SSH key** (C1) — revoke at GitHub, replace in deployment, then optionally rewrite history.
-2. **[Operator] Restore the deployed `DATABASE_URL`** (H2) — verify with `/api/health` returning `{"ok":true}`, then re-run the live-site suite: `LIVE_SITE_URL=https://kimi-chat.jesspete.shop npx playwright test tests/live-site.spec.ts`.
-3. Schedule `npm run prune` (M3) per the retention policy the operator chooses (e.g. weekly cron).
-4. Add a nonce-based CSP `script-src` policy at deployment time (I1).
-5. Revisit rAF/`useDeferredValue` Markdown rendering if long-answer jank is profiled (I7).
-6. After key rotation, decide on history rewrite (C1) with operator sign-off.
+1. **[Operator] Rotate both exposed credentials** (C1, C2) — the GitHub SSH key and the NVIDIA key (even though it currently reads as dead); then optionally rewrite history with sign-off.
+2. **[Operator] Redeploy the production build** — H1's fix is inert until deployed; then run `LIVE_SITE_URL=https://kimi-chat.jesspete.shop npx playwright test tests/live-site.spec.ts` and expect 12/12 including a real streamed answer.
+3. **[Operator] Schedule retention** — `npm run prune -- --idle-days 30 [--conversation-days 90]` via weekly cron (I6).
+4. **[Backlog] Lease-conflict (429) coverage** — extract the lease claim seam (I2).
+5. **[Backlog, deploy-time] Nonce-based CSP `script-src`** (I3).
+6. **[Backlog, perf pass] Re-baseline Lighthouse** after the next render-path change (I5).

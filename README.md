@@ -154,7 +154,7 @@ References: [NVIDIA model page](https://build.nvidia.com/moonshotai/kimi-k3) · 
 
 ## Data and security boundaries
 
-This is a **browser-session workspace, not an enterprise identity system**. A random 256-bit HTTP-only, SameSite=Strict cookie identifies a workspace; only its SHA-256 digest is stored as the database owner identifier. Cookies use `Secure` when served over HTTPS. Clearing the cookie loses workspace access. Deploy only behind trusted HTTPS ingress that preserves the public Host and Origin; do not expose an untrusted proxy-header path.
+This is a **browser-session workspace, not an enterprise identity system**. A random 256-bit HTTP-only, SameSite=Strict cookie identifies a workspace; only its SHA-256 digest is stored as the database owner identifier. Cookies use `Secure` when served over HTTPS. Clearing the cookie loses workspace access. Deploy only behind trusted HTTPS ingress that preserves the public Host (or forwards it as `x-forwarded-host`, the Cloudflare/nginx convention — same-origin writes match against both) and does not expose an untrusted proxy-header path.
 
 Every conversation read and mutation checks ownership. Writes require a same-origin `Origin` header. Drizzle supplies parameterized queries. Model-generated Markdown cannot execute raw HTML; remote model-generated images are not automatically fetched. Logs use operation names, request/conversation identifiers, and error types — not message contents or API keys.
 
@@ -190,19 +190,24 @@ E2E prerequisites: a disposable test `DATABASE_URL` (fixtures are inserted and c
 
 ## Project status & recent changes
 
-Latest verification (2026-09-10, audit pass 2): typecheck, lint, build, 5/5 unit tests, 14/14 Playwright tests locally (including error-state axe WCAG 2.2 AA, server-side search, and retention suites), Lighthouse 90/100/96, and a clean production dependency audit. Full evidence and the severity-ranked finding list live in [`docs/CODE_REVIEW_REPORT.md`](docs/CODE_REVIEW_REPORT.md).
+Latest verification (2026-09-10, audit pass 3): typecheck, lint, build, 15/15 unit tests, 16/16 Playwright tests locally (proxied-origin and mobile-nav regression suites included), a full provider-contract round-trip against NVIDIA (structured error path verified with a rejected key), and a clean production dependency audit. The live deployment's database outage (pass 2 H2) is resolved — `https://kimi-chat.jesspete.shop/api/health` returns `{"ok":true}`. Full evidence and the severity-ranked finding list live in [`docs/CODE_REVIEW_REPORT.md`](docs/CODE_REVIEW_REPORT.md).
 
 | Change | Notes |
 |--------|-------|
-| Accessibility in error states | Error-banner contrast raised to 4.5:1+ and the WCAG suite now scans the error state (was welcome/dialog only) |
-| Robust degraded-API UX | Non-JSON or contract-breaking API responses show curated copy instead of raw parse errors |
-| Server-side search | `GET /api/conversations?q=` matches titles and message content, owner-isolated; ⌘K dialog queries it with a 250 ms debounce |
-| Retention CLI | `npm run prune` deletes idle sessions (cascade) and optionally stale conversations; integration-tested |
+| Proxy-aware same-origin checks | Same-origin writes now accept `x-forwarded-host` when the ingress rewrites `Host` (verified broken live: every browser send returned 403 behind Cloudflare). Pure `src/lib/origin.ts` with 7 unit tests + an API regression test |
+| Modal mobile navigation | The mobile drawer is a Radix dialog: focus containment, Escape closes, focus restores to the opener, and an accessible close control lives inside the drawer |
+| Incremental SSE parser | Adopted from `sample-build`: LF/CRLF/CR parity, split CRLF across chunks, exactly-one-space `data:` prefix handling, incremental size accounting |
+| Hardened live E2E | The streaming test waits for a nonce inside an assistant message (no more false "streamed" from the user bubble), fails loudly on error banners, and verifies persistence |
+| Secret hygiene | A tracked `.env` carrying a provider key was untracked (and the key, which NVIDIA rejects with 403, must still be rotated); a second embedded key in `docs/` was redacted; CI now runs a credential-pattern scan |
+| CI trigger repaired | `branches: ain]` → `branches: [main]` — CI was silently skipping every push to `main`; production-only `npm audit` added |
+| Accessibility in error states | Error-banner contrast raised to 4.5:1+ and the WCAG suite now scans the error state (pass 2) |
+| Robust degraded-API UX | Non-JSON or contract-breaking API responses show curated copy instead of raw parse errors (pass 2) |
+| Server-side search | `GET /api/conversations?q=` matches titles and message content, owner-isolated; ⌘K dialog queries it with a 250 ms debounce (pass 2) |
+| Retention CLI | `npm run prune` deletes idle sessions (cascade) and optionally stale conversations; integration-tested (pass 2) |
 | Live-deployment E2E | `tests/live-site.spec.ts` (env-gated via `LIVE_SITE_URL`) validates a deployed instance end to end |
-| CI | `.github/workflows/ci.yml` runs typecheck → lint → unit → build, plus E2E against a PostgreSQL service container |
+| CI | `.github/workflows/ci.yml` runs secret scan → typecheck → lint → unit → build → prod audit, plus E2E against a PostgreSQL service container |
 | HSTS | `Strict-Transport-Security: max-age=63072000; includeSubDomains` added app-side (enforced by TLS ingress) |
 | Database lifecycle | `drizzle.config.ts` reads `DATABASE_URL` (no hard-coded sandbox URL), `npm run db:generate` → `drizzle/*.sql`, `npm run db:migrate` (production-safe), `npm run db:seed` (idempotent local seed) |
-| Security remediation | Removed a committed SSH private key from `docs/`; secret patterns ignored. **The exposed key must still be rotated by the operator** — removal does not unpublish git history |
 
 ## Design system
 
@@ -226,6 +231,7 @@ Latest verification (2026-09-10, audit pass 2): typecheck, lint, build, 5/5 unit
 | `/api/health` returns `{"ok":false}` (HTTP 500) while the page still loads | The app cannot reach PostgreSQL. Check that the database behind `DATABASE_URL` is running, reachable from the server, and accepts the configured credentials; restart the app after fixing. The UI renders but sessions/conversations fail until this is green |
 | “Connect NVIDIA…” banner on send | Add `NVIDIA_API_KEY` to the **server** environment and restart; the UI works without it |
 | 429 “A response is already running” | One generation per session is enforced; wait a moment and retry |
+| 403 “This action must be made from your chat workspace.” on send | Your ingress rewrites `Host` without forwarding the public hostname in `x-forwarded-host`. Configure the proxy to pass `x-forwarded-host` (Cloudflare/nginx default) or preserve the public `Host` |
 | Playwright tests fail to connect | Start the production preview (`npm run build && npm start`) and set `TEST_BASE_URL` if non-default |
 | Session reset loses conversations | Clearing cookies orphans the workspace owner — this is documented session behavior, not data loss |
 | Reverse proxy buffers the stream | Disable response buffering for `/api/chat` (e.g. `X-Accel-Buffering: no` is sent; honor it) |

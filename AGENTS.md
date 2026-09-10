@@ -39,12 +39,14 @@ Verification order: `npm run typecheck` → `npm run lint` → `npm test` → `n
 
 - `src/app/api/chat/route.ts` — the core: origin check → session → zod validation → image magic-byte check → atomic session lease (one generation per workspace, 3 s spacing, 195 s expiry) → conversation upsert with duplicate-retry guard → NVIDIA fetch with SSE parse → persistence of final answer only → SSE to browser.
 - `src/app/api/conversations/` — list / search / read / rename / delete. The list endpoint accepts `?q=` (server-side ILIKE over title and JSONB message content, owner-filtered, wildcard-escaped). Every query filters by `owner`; delete uses a transaction with `FOR UPDATE` on the session row so it cannot race a running generation.
+- `src/lib/origin.ts` — pure same-origin gate shared by every write endpoint: accepts the origin when it matches `Host` OR the first `x-forwarded-host` value (trusted-ingress convention); rejects `sec-fetch-site: cross-site`, malformed origins, and non-http(s) schemes. Kept free of Next/DB imports so the unit suite can run it anywhere.
 - `src/lib/server.ts` — cookie session (`kimi_session`, 64-hex token; only the SHA-256 digest is stored as `owner`), `assertOrigin` (same-origin writes), bounded `readJson` (3 MB), `errorResponse` (structured logs without PII).
 - `src/lib/retention.ts` — pure prune functions taking `{ db, tables, options }` (no relative runtime imports so the node type-stripping CLI can load them). `scripts/prune-expired.mjs` is the CLI wrapper (`npm run prune`).
 - `src/db/seed.ts` + `scripts/seed.mjs` — idempotent local-dev seed (no PII, safe to re-run). Injected `{ db, tables }` so the CLI stays alias-free and type-strippable.
 - `src/lib/validation.ts` — all zod schemas, shared by server and unit tests.
-- `src/lib/sse.ts` — SSE parser handling cross-network-chunk events, CRLF, multi-line data; used by BOTH the API route and the browser client. Changes affect both sides.
+- `src/lib/sse.ts` — SSE parser handling LF/CRLF/CR separators, events split across network chunks, and multi-line data with incremental size limits; used by BOTH the API route and the browser client. Changes affect both sides.
 - `src/components/chat-workspace.tsx` — the entire client UI (single component, ~1500 lines). Client-side zod schemas validate every API and stream payload.
+- `src/components/navigation-frame.tsx` — wraps the sidebar in a Radix dialog while the mobile drawer is open (focus containment, Escape, focus restore to the "Open navigation" control). The Radix backdrop is aria-hidden, so the drawer carries its own close button (`.sidebar-close`, visible only while open).
 - `src/db/schema.ts` — Drizzle schema. `messages` is JSONB on `conversations`; cascade delete via session FK.
 
 ## Non-obvious rules
@@ -58,7 +60,8 @@ Verification order: `npm run typecheck` → `npm run lint` → `npm test` → `n
 - There is no `tailwind.config.js`; Tailwind v4 is wired through PostCSS and design tokens live in `src/app/globals.css` (`--mint` palette).
 - Do not weaken gates to make them pass (no `@ts-ignore`, no disabling rules, no deleting tests). Fix root causes.
 - Keep all commits on `main`.
-- Operational debt: a private key was once committed at `docs/ssh-key.txt` (removed from tracking; still in git history — see `docs/CODE_REVIEW_REPORT.md`). Treat rotation as pending until the operator confirms it; never reintroduce key material.
+- Operational debt: a private key was once committed at `docs/ssh-key.txt` (removed from tracking; still in git history — see `docs/CODE_REVIEW_REPORT.md`) and a provider key was once committed in `.env` (untracked in pass 3). Treat BOTH rotations as pending until the operator confirms them; never reintroduce key material or track `.env`.
+- Deployments behind TLS ingress must preserve the public `Host` or forward it as `x-forwarded-host` (Cloudflare/nginx do); otherwise the same-origin gate rejects browser writes with 403. README troubleshooting documents the failure mode.
 - `scripts/` holds operational CLI scripts (`.mjs` with explicit `.ts` import extensions — Node type-stripping requires extensions and does not resolve `@/` aliases; `src/lib/retention.ts` and `src/db/seed.ts` therefore keep runtime imports down to `drizzle-orm` and receive tables from the caller).
 
 ---

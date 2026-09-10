@@ -26,7 +26,7 @@ Stack: Next.js 16 App Router · React 19 · TypeScript (strict) · Tailwind v4 (
 - **Server is the authority** — every limit, ownership check, and validation is enforced server-side; the client mirrors for UX only.
 - **No silent failure** — user-facing error copy is specific and actionable; structured JSON logs carry operation/id/error-type, never message content or secrets.
 - **Streaming integrity** — only complete provider answers are persisted; partial/failed streams surface explicit errors and stay retryable.
-- **Session isolation** — every conversation query filters by `owner`; writes require a same-origin `Origin` header.
+- **Session isolation** — every conversation query filters by `owner`; writes require a same-origin `Origin` header (matched against `Host` or the trusted ingress's `x-forwarded-host`).
 - **Curated failure surfaces** — initial-load failures always show the reload guidance; streamed/API error copy comes from the server contract. Raw parse, network, or schema errors never reach the banner.
 
 ## Implementation Standards
@@ -85,7 +85,7 @@ npm run dev                           # http://localhost:3000
 
 ### Test Pyramid
 
-- **Unit** (`tests/core.test.mjs`): zod schemas, SSE parser edge cases — fast, no services.
+- Unit (`tests/core.test.mjs`, `tests/origin.test.mjs`): zod schemas, SSE parser edge cases (LF/CRLF/CR, split chunks, size limits), and the pure same-origin gate — fast, no services.
 - **API/integration** (`tests/workspace.spec.ts`): session isolation, ownership, origin enforcement, cookie flags, `?q=` search, retention pruning — Playwright request context + Drizzle fixtures.
 - **E2E/UI** (`tests/workspace.spec.ts`, `tests/stream-ui.spec.ts`): user journeys, WCAG AA via axe (welcome, dialogs, **and the error state**), streamed-answer rendering through a transport fixture (no live provider needed).
 - **Live deployment** (`tests/live-site.spec.ts`): env-gated via `LIVE_SITE_URL`; validates a real deployment (headers, API contract, session isolation, optional single provider round-trip).
@@ -138,7 +138,7 @@ Request path: browser → `/api/chat` → origin + session + lease → conversat
 
 | Endpoint | Method | Notes |
 |----------|--------|-------|
-| `/api/chat` | POST | SSE stream; origin-checked; session lease (429 on conflict) |
+| `/api/chat` | POST | SSE stream; origin-checked (proxy-aware); session lease (429 on conflict) |
 | `/api/conversations` | GET | Sets session cookie; returns list + `configured` flag; optional `?q=` server-side search over titles and message content |
 | `/api/conversations/[id]` | GET/PATCH/DELETE | Ownership enforced; rename validates 1–100 chars; delete is transactional and refuses while a response is running |
 | `/api/health` | GET | DB connectivity only; does not validate the provider key |
