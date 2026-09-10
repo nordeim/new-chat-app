@@ -3,7 +3,6 @@ skills/
 sample-build/
 backup/
 venv/
-skills
 .agents
 .claude
 .next/
@@ -15,3 +14,9 @@ out/
 .artifacts/
 test-results/
 playwright-report/
+
+# Secrets — never commit credentials or private keys
+ssh-key*.txt
+*.pem
+*.key
+id_rsa*
