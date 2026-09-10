@@ -153,3 +153,239 @@ test("non-JSON API failure renders friendly copy, not a parse error", async ({
   const text = await banner.innerText();
   expect(text).not.toMatch(/unexpected|token|json/i);
 });
+
+test("skip link targets the composer", async ({ page }) => {
+  await page.route("**/api/conversations", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ conversations: [], configured: true }),
+    }),
+  );
+  await page.goto(base);
+  const skip = page.getByRole("link", { name: "Skip to message composer" });
+  await expect(skip).toHaveAttribute("href", "#message");
+  await expect(page.locator("#message")).toHaveCount(1);
+});
+
+test("composer shows a character count as the draft grows", async ({ page }) => {
+  await page.route("**/api/conversations", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ conversations: [], configured: true }),
+    }),
+  );
+  await page.goto(base);
+  await page.getByRole("textbox", { name: "Message Kimi" }).fill("Hello");
+  await expect(page.getByText("5 / 16,000")).toBeVisible();
+});
+
+test("database outage shows specific recovery copy", async ({ page }) => {
+  await page.route("**/api/conversations", (route) =>
+    route.fulfill({
+      status: 500,
+      contentType: "application/json",
+      body: JSON.stringify({ error: "down" }),
+    }),
+  );
+  await page.route("**/api/health", (route) =>
+    route.fulfill({
+      status: 500,
+      contentType: "application/json",
+      body: JSON.stringify({ ok: false }),
+    }),
+  );
+  await page.goto(base);
+  // Scoped to the app banner: Next.js's global route announcer also has
+  // role="alert" and would otherwise win the locator.
+  await expect(page.locator(".error-banner")).toContainText(
+    "cannot reach its database",
+  );
+});
+
+test("fenced code in a streamed answer exposes a copy control", async ({
+  page,
+}) => {
+  const conversationId = crypto.randomUUID();
+  const assistantId = crypto.randomUUID();
+  const content = "```ts\nconst ready = true;\n```";
+  await page.route("**/api/conversations", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ conversations: [], configured: true }),
+    }),
+  );
+  await page.route("**/api/chat", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "text/event-stream",
+      body: sse([
+        {
+          type: "meta",
+          conversation: {
+            id: conversationId,
+            title: "Code sample",
+            updatedAt: new Date().toISOString(),
+          },
+        },
+        { type: "delta", content },
+        {
+          type: "done",
+          message: { id: assistantId, role: "assistant", content },
+        },
+      ]),
+    }),
+  );
+  await page.goto(base);
+  await page.getByRole("textbox", { name: "Message Kimi" }).fill("Show code");
+  await page.getByRole("button", { name: "Send message" }).click();
+  await expect(page.getByRole("button", { name: "Copy code" })).toBeVisible();
+});
+
+test("attached images open in a lightbox", async ({ page }) => {
+  const conversationId = crypto.randomUUID();
+  const assistantId = crypto.randomUUID();
+  await page.route("**/api/conversations", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ conversations: [], configured: true }),
+    }),
+  );
+  await page.route("**/api/chat", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "text/event-stream",
+      body: sse([
+        {
+          type: "meta",
+          conversation: {
+            id: conversationId,
+            title: "Image look",
+            updatedAt: new Date().toISOString(),
+          },
+        },
+        { type: "delta", content: "A single green pixel." },
+        {
+          type: "done",
+          message: {
+            id: assistantId,
+            role: "assistant",
+            content: "A single green pixel.",
+          },
+        },
+      ]),
+    }),
+  );
+  await page.goto(base);
+  await page
+    .getByLabel("Upload image", { exact: true })
+    .setInputFiles({
+      name: "one-pixel.png",
+      mimeType: "image/png",
+      buffer: Buffer.from(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=",
+        "base64",
+      ),
+    });
+  await page.getByRole("button", { name: "Send message" }).click();
+  await expect(
+    page.getByAltText("Image attached to your message"),
+  ).toBeVisible();
+  await page.getByAltText("Image attached to your message").click();
+  await expect(
+    page.getByRole("dialog", { name: /Image attached/ }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Close image preview" }).click();
+  await expect(
+    page.getByRole("dialog", { name: /Image attached/ }),
+  ).toHaveCount(0);
+});
+
+test("malformed stream events render curated copy, not raw parse errors", async ({
+  page,
+}) => {
+  await page.route("**/api/conversations", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ conversations: [], configured: true }),
+    }),
+  );
+  // A degraded proxy/server can emit frames that are complete but not JSON.
+  await page.route("**/api/chat", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "text/event-stream",
+      body: "data: {broken\n\n",
+    }),
+  );
+  await page.goto(base);
+  await page
+    .getByRole("textbox", { name: "Message Kimi" })
+    .fill("Trigger a malformed frame");
+  await page.getByRole("button", { name: "Send message" }).click();
+  const banner = page.locator(".error-banner");
+  await expect(banner).toContainText(
+    "The response stream was interrupted. Please try again.",
+  );
+  const text = await banner.innerText();
+  expect(text).not.toMatch(/unexpected token|JSON|issues|\{/i);
+});
+
+test("stop button aborts the stream and restores the draft", async ({ page }) => {
+  await page.route("**/api/conversations", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ conversations: [], configured: true }),
+    }),
+  );
+  await page.route("**/api/chat", async (route) => {
+    // Hold the request open without ever answering: the send is in-flight
+    // until the user presses stop, which aborts the fetch client-side.
+    await new Promise(() => {});
+  });
+  await page.goto(base);
+  await page
+    .getByRole("textbox", { name: "Message Kimi" })
+    .fill("Count to one hundred");
+  await page.getByRole("button", { name: "Send message" }).click();
+  await expect(
+    page.getByRole("button", { name: "Stop response" }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Stop response" }).click();
+  await expect(page.locator(".error-banner")).toContainText(
+    "Response stopped. You can try again when you’re ready.",
+  );
+  await expect(
+    page.getByRole("textbox", { name: "Message Kimi" }),
+  ).toBeEnabled();
+  await expect(
+    page.getByRole("textbox", { name: "Message Kimi" }),
+  ).toHaveValue("Count to one hundred");
+  await expect(page.locator(".message.assistant")).toHaveCount(0);
+});
+
+test("oversized images are rejected client-side with actionable copy", async ({
+  page,
+}) => {
+  await page.route("**/api/conversations", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ conversations: [], configured: true }),
+    }),
+  );
+  await page.goto(base);
+  await page.getByLabel("Upload image", { exact: true }).setInputFiles({
+    name: "too-big.png",
+    mimeType: "image/png",
+    buffer: Buffer.alloc(2 * 1024 * 1024 + 1, 137),
+  });
+  await expect(page.locator(".error-banner")).toContainText(
+    "Choose a PNG, JPEG, or WebP image up to 2 MB.",
+  );
+});

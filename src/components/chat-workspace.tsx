@@ -9,8 +9,6 @@ import {
 } from "react";
 import Image from "next/image";
 import * as Dialog from "@radix-ui/react-dialog";
-import Markdown from "react-markdown";
-import remarkGfm from "remark-gfm";
 import { z } from "zod";
 import {
   ArrowUp,
@@ -41,7 +39,6 @@ import {
   Loader2,
   Command,
   ShieldCheck,
-  Zap,
   Eye,
   MoreHorizontal,
 } from "lucide-react";
@@ -52,6 +49,15 @@ import {
   type ConversationSummary,
 } from "@/lib/types";
 import { SSEParser } from "@/lib/sse";
+import {
+  formatRelativeTime,
+  groupConversationsByPeriod,
+} from "@/lib/history";
+import {
+  workspaceLoadError,
+} from "@/lib/workspace-error";
+import { MarkdownMessage } from "@/components/markdown-message";
+import { ImageLightbox } from "@/components/image-lightbox";
 import NavigationFrame from "@/components/navigation-frame";
 
 const categories = [
@@ -250,12 +256,14 @@ export default function ChatWorkspace() {
   const [rename, setRename] = useState("");
   const [mutationBusy, setMutationBusy] = useState(false);
   const [copied, setCopied] = useState<string>();
+  const [lightbox, setLightbox] = useState<{ src: string; alt: string }>();
   const textarea = useRef<HTMLTextAreaElement>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const abortRef = useRef<AbortController>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const openingRef = useRef(0);
   const current = history.find((item) => item.id === currentId);
+  const groupedHistory = groupConversationsByPeriod(history);
   const filteredHistory = history.filter((item) =>
     item.title.toLowerCase().includes(search.toLowerCase()),
   );
@@ -273,10 +281,22 @@ export default function ChatWorkspace() {
         setReady(true);
       })
       .catch(() => {
-        if (cancelled) return;
-        // Initial-load failures are never actionable beyond a reload, so the
-        // curated copy replaces raw network/server error text here.
-        setError("Could not load your workspace. Please reload.");
+        // Distinguish a database outage from a generic failure so the banner
+        // points at the actual recovery step. A non-JSON or failed health
+        // probe falls back to the reload guidance.
+        void fetch("/api/health", { cache: "no-store" })
+          .then(async (response) => {
+            try {
+              return (await response.json()) as { ok?: unknown };
+            } catch {
+              return null;
+            }
+          })
+          .catch(() => null)
+          .then((health) => {
+            if (cancelled) return;
+            setError(workspaceLoadError(health));
+          });
       });
     return () => {
       cancelled = true;
@@ -410,10 +430,12 @@ export default function ChatWorkspace() {
   async function upload(file?: File) {
     if (!file) return;
     if (
-      !["image/png", "image/jpeg", "image/webp"].includes(file.type) ||
+      !(["image/png", "image/jpeg", "image/webp"] as string[]).includes(
+        file.type,
+      ) ||
       file.size > 2 * 1024 * 1024
     ) {
-      setError("Choose a PNG, JPEG, or WebP image under 2 MB.");
+      setError("Choose a PNG, JPEG, or WebP image up to 2 MB.");
       return;
     }
     try {
@@ -444,7 +466,10 @@ export default function ChatWorkspace() {
     event?.preventDefault();
     const content = retryMessage?.content ?? draft.trim();
     const image = retryMessage?.image ?? attachment?.data;
-    if (!content || busy || !ready || loadingChat) return;
+    // abortRef doubles as a send latch: it is non-null exactly while a
+    // stream is in flight, closing the Enter/click race the closure-based
+    // `busy` check cannot structurally prevent.
+    if (!content || busy || !ready || loadingChat || abortRef.current) return;
     const previousMessages = messages;
     const newUser: ChatMessage = {
       id: crypto.randomUUID(),
@@ -490,7 +515,17 @@ export default function ChatWorkspace() {
       const parser = new SSEParser();
       const consume = (events: string[]) => {
         for (const value of events) {
-          const item = streamEventSchema.parse(JSON.parse(value));
+          let item: z.infer<typeof streamEventSchema>;
+          try {
+            item = streamEventSchema.parse(JSON.parse(value));
+          } catch {
+            // A degraded proxy/server can emit malformed frames. Same client
+            // boundary as parseOrReload: raw parse/schema text never reaches
+            // the banner. Server error events below carry their own copy.
+            throw new Error(
+              "The response stream was interrupted. Please try again.",
+            );
+          }
           if (item.type === "meta") {
             accepted = true;
             setCurrentId(item.conversation.id);
@@ -551,9 +586,17 @@ export default function ChatWorkspace() {
         if (image) setAttachment({ data: image, name: "Attached image" });
       } else setMessages(base);
     } finally {
-      setBusy(false);
-      setThinking(false);
-      abortRef.current = null;
+      // Defer the busy flip by one macrotask. The click that hit "Stop" is
+      // still being processed when the aborted fetch rejects: swapping the
+      // stop button for the submit button inside that same input task makes
+      // Chromium re-target the click's activation to the new default button,
+      // re-submitting the form as an instant duplicate send (observed with a
+      // plain hanging request — no route interception involved).
+      setTimeout(() => {
+        setBusy(false);
+        setThinking(false);
+        abortRef.current = null;
+      }, 0);
     }
   }
 
@@ -628,6 +671,9 @@ export default function ChatWorkspace() {
 
   return (
     <div className={`app-shell ${sidebarCollapsed ? "sidebar-collapsed" : ""}`}>
+      <a className="skip-link" href="#message">
+        Skip to message composer
+      </a>
       <NavigationFrame open={mobileOpen} onOpenChange={setMobileOpen}>
         <aside
           className={`sidebar ${mobileOpen ? "mobile-open" : ""}`}
@@ -688,22 +734,24 @@ export default function ChatWorkspace() {
         </div>
         <nav className="conversation-list" aria-label="Saved conversations">
           {history.length > 0 ? (
-            <>
-              <div className="history-period">Recent</div>
-              {history.map((item) => (
-                <button
-                  key={item.id}
-                  className={`conversation-item ${currentId === item.id ? "active" : ""}`}
-                  disabled={busy}
-                  onClick={() => void openConversation(item.id)}
-                  title={item.title}
-                >
-                  <MessageSquare size={16} />
-                  <span>{item.title}</span>
-                  {currentId === item.id && <span className="active-dot" />}
-                </button>
-              ))}
-            </>
+            groupedHistory.map((group) => (
+              <div key={group.label}>
+                <div className="history-period">{group.label}</div>
+                {group.items.map((item) => (
+                  <button
+                    key={item.id}
+                    className={`conversation-item ${currentId === item.id ? "active" : ""}`}
+                    disabled={busy}
+                    onClick={() => void openConversation(item.id)}
+                    title={`${item.title} · ${formatRelativeTime(item.updatedAt)}`}
+                  >
+                    <MessageSquare size={16} />
+                    <span>{item.title}</span>
+                    {currentId === item.id && <span className="active-dot" />}
+                  </button>
+                ))}
+              </div>
+            ))
           ) : (
             <div className="history-empty">
               <div className="history-empty-icon">
@@ -895,38 +943,32 @@ export default function ChatWorkspace() {
                       {message.role === "assistant" && <span>K3</span>}
                     </div>
                     {message.image && (
-                      <Image
-                        unoptimized
-                        className="message-image"
-                        src={message.image}
-                        width={280}
-                        height={200}
-                        alt="Image attached to your message"
-                      />
+                      <button
+                        type="button"
+                        className="message-image-button"
+                        onClick={() =>
+                          setLightbox({
+                            src: message.image as string,
+                            alt: "Image attached to your message",
+                          })
+                        }
+                      >
+                        <Image
+                          unoptimized
+                          className="message-image"
+                          src={message.image}
+                          width={280}
+                          height={200}
+                          alt="Image attached to your message"
+                        />
+                      </button>
                     )}
                     {message.role === "assistant" ? (
                       message.content ? (
-                        <div className="markdown">
-                          <Markdown
-                            remarkPlugins={[remarkGfm]}
-                            components={{
-                              a: ({ children, href }) => (
-                                <a
-                                  href={href}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                >
-                                  {children}
-                                </a>
-                              ),
-                              img: ({ alt }) => (
-                                <span>[Image: {alt ?? "image"}]</span>
-                              ),
-                            }}
-                          >
-                            {message.content}
-                          </Markdown>
-                        </div>
+                        <MarkdownMessage
+                          content={message.content}
+                          streaming={busy && message.id === messages.at(-1)?.id}
+                        />
                       ) : (
                         <div className="thinking-indicator">
                           <span />
@@ -1029,7 +1071,7 @@ export default function ChatWorkspace() {
             </div>
           )}
           <form
-            className={`composer ${busy ? "is-busy" : ""}`}
+            className="composer"
             onSubmit={(event) => void sendMessage(event)}
             onDragOver={(event) => event.preventDefault()}
             onDrop={(event) => {
@@ -1147,6 +1189,12 @@ export default function ChatWorkspace() {
                 </span>
               </div>
               <div className="send-options">
+                <span
+                  className={`char-count ${draft.length > 15000 ? "near-limit" : ""}`}
+                  aria-live="off"
+                >
+                  {draft.length.toLocaleString("en-US")} / 16,000
+                </span>
                 <span className="enter-hint">
                   {busy ? "Working on it" : "Enter to send"}
                 </span>
@@ -1560,6 +1608,16 @@ export default function ChatWorkspace() {
             <X size={14} />
           </button>
         </div>
+      )}
+      {lightbox && (
+        <ImageLightbox
+          src={lightbox.src}
+          alt={lightbox.alt}
+          open={Boolean(lightbox)}
+          onOpenChange={(open) => {
+            if (!open) setLightbox(undefined);
+          }}
+        />
       )}
       <div className="sr-only" role="status" aria-live="polite">
         {busy
