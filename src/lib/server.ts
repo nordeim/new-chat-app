@@ -5,6 +5,7 @@ import { eq } from "drizzle-orm";
 import { db } from "@/db";
 import { sessions } from "@/db/schema";
 import { isSameOriginRequest } from "@/lib/origin";
+import { abortErrorLog, streamAbortKind } from "@/lib/stream-abort";
 
 const cookieName = "kimi_session";
 export class ApiError extends Error {
@@ -113,13 +114,24 @@ export function errorResponse(error: unknown, operation: string) {
       { status: error.status },
     );
   const requestId = crypto.randomUUID();
-  console.error(
-    JSON.stringify({
-      operation,
-      requestId,
-      errorType: error instanceof Error ? error.name : "UnknownError",
-    }),
-  );
+  const errorType = error instanceof Error ? error.name : "UnknownError";
+  const abortBy = streamAbortKind(error);
+  if (abortBy) {
+    // The client went away before the action finished (e.g. a disconnect while
+    // an attachment body was still uploading). Expected teardown, not a
+    // server failure — warn keeps it separable from genuine errors.
+    console.warn(
+      abortErrorLog({ operation, requestId, abortBy, errorType }).line,
+    );
+  } else {
+    console.error(
+      JSON.stringify({
+        operation,
+        requestId,
+        errorType,
+      }),
+    );
+  }
   return NextResponse.json(
     {
       error: "The workspace could not complete this action. Please try again.",

@@ -13,6 +13,12 @@ import {
 } from "../src/lib/history.ts";
 import { getNodeText } from "../src/lib/markdown.ts";
 import { workspaceLoadError } from "../src/lib/workspace-error.ts";
+import {
+  streamAbortKind,
+  streamAbortLog,
+  streamErrorLog,
+  abortErrorLog,
+} from "../src/lib/stream-abort.ts";
 
 const input = {
   content: "Hello",
@@ -205,4 +211,86 @@ test("workspace load copy distinguishes a down database from a generic failure",
     workspaceLoadError(null),
     "Could not load your workspace. Please reload.",
   );
+});
+
+test("classifies runtime abort errors as client disconnects", () => {
+  // Next.js aborts request.signal with this named error when the browser
+  // disconnects mid-stream (Stop, refresh, tab close, navigation).
+  const responseAborted = Object.assign(new Error("The response was aborted"), {
+    name: "ResponseAborted",
+  });
+  assert.equal(streamAbortKind(responseAborted), "client-disconnect");
+  // The stream-cancel path aborts without a reason (default AbortError) and
+  // can win the race against the named error for the same disconnect.
+  const stopped = new DOMException("This operation was aborted", "AbortError");
+  assert.equal(streamAbortKind(stopped), "client-disconnect");
+  assert.equal(streamAbortKind(new Error("boom")), null);
+  assert.equal(streamAbortKind("boom"), null);
+  assert.equal(streamAbortKind(undefined), null);
+});
+
+test("classifies the route timeout separately from client disconnects", () => {
+  const timedOut = new DOMException("The operation timed out", "TimeoutError");
+  assert.equal(streamAbortKind(timedOut), "timeout");
+});
+
+test("recognizes Node's premature client-close signature on request bodies", () => {
+  // IncomingMessage 'error' when the client destroys the socket mid-upload:
+  // verified live — name="Error", message="aborted", code="ECONNRESET".
+  const connReset = Object.assign(new Error("aborted"), { code: "ECONNRESET" });
+  assert.equal(streamAbortKind(connReset), "client-disconnect");
+  // A provider/database connection reset with different wording is a real
+  // failure, not a client abort.
+  const pgReset = Object.assign(new Error("Connection terminated unexpectedly"), {
+    code: "ECONNRESET",
+  });
+  assert.equal(streamAbortKind(pgReset), null);
+});
+
+test("stream abort log is warn-level structured JSON that leaks no content", () => {
+  const { level, line } = streamAbortLog({
+    operation: "chat.stream",
+    conversationId: "c1",
+    abortBy: "client-disconnect",
+    partialChars: 123,
+  });
+  assert.equal(level, "warn");
+  assert.deepEqual(JSON.parse(line), {
+    operation: "chat.stream",
+    conversationId: "c1",
+    outcome: "aborted",
+    abortBy: "client-disconnect",
+    partialChars: 123,
+  });
+});
+
+test("stream error log keeps the established error-level shape", () => {
+  const { level, line } = streamErrorLog({
+    operation: "chat.stream",
+    conversationId: "c1",
+    errorType: "TypeError",
+  });
+  assert.equal(level, "error");
+  assert.deepEqual(JSON.parse(line), {
+    operation: "chat.stream",
+    conversationId: "c1",
+    errorType: "TypeError",
+  });
+});
+
+test("create-path abort log is warn-level with kind and runtime error name", () => {
+  const { level, line } = abortErrorLog({
+    operation: "chat.create",
+    requestId: "r1",
+    abortBy: "client-disconnect",
+    errorType: "Error",
+  });
+  assert.equal(level, "warn");
+  assert.deepEqual(JSON.parse(line), {
+    operation: "chat.create",
+    requestId: "r1",
+    outcome: "aborted",
+    abortBy: "client-disconnect",
+    errorType: "Error",
+  });
 });

@@ -11,6 +11,11 @@ import {
 } from "@/lib/server";
 import { chatInputSchema, providerChunkSchema } from "@/lib/validation";
 import { SSEParser } from "@/lib/sse";
+import {
+  streamAbortKind,
+  streamAbortLog,
+  streamErrorLog,
+} from "@/lib/stream-abort";
 import type { ChatMessage } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -306,13 +311,31 @@ export async function POST(req: NextRequest) {
             },
           });
         } catch (error) {
-          console.error(
-            JSON.stringify({
-              operation: "chat.stream",
-              conversationId: saved.id,
-              errorType: error instanceof Error ? error.name : "UnknownError",
-            }),
-          );
+          const abortBy = streamAbortKind(error);
+          if (abortBy) {
+            // Expected teardown: the browser went away mid-stream (Stop,
+            // refresh, tab close, navigation). Next.js aborts request.signal
+            // with a named ResponseAborted error; an internal race can surface
+            // the same disconnect as a default AbortError instead. Warn level
+            // keeps these separable from genuine failures. partialChars is a
+            // length, not content, and records how much was discarded.
+            console.warn(
+              streamAbortLog({
+                operation: "chat.stream",
+                conversationId: saved.id,
+                abortBy,
+                partialChars: assistant.content.length,
+              }).line,
+            );
+          } else {
+            console.error(
+              streamErrorLog({
+                operation: "chat.stream",
+                conversationId: saved.id,
+                errorType: error instanceof Error ? error.name : "UnknownError",
+              }).line,
+            );
+          }
           try {
             send({
               type: "error",
