@@ -47,6 +47,35 @@ test("parses fragmented CRLF and multiline SSE events", () => {
   assert.deepEqual(parser.push("data: [DONE]"), []);
   assert.deepEqual(parser.finish(), ["[DONE]"]);
 });
+
+test("parses lone-CR separated events and CRLF split across chunks", () => {
+  const parser = new SSEParser();
+  // Lone CR line separators (SSE allows CR, LF, or CRLF).
+  assert.deepEqual(parser.push("data: one\rdata: two\r\r"), ["one\ntwo"]);
+  // A CRLF pair split across network chunks must not emit a blank line.
+  assert.deepEqual(parser.push("data: A\r"), []);
+  assert.deepEqual(parser.push("\ndata: B\r\n\r\n"), ["A\nB"]);
+});
+
+test("ignores comment lines and strips exactly one space after data:", () => {
+  const parser = new SSEParser();
+  assert.deepEqual(parser.push(": ping\n\n"), []);
+  assert.deepEqual(parser.push("data:no-space\n\n"), ["no-space"]);
+  assert.deepEqual(parser.push("data:  two-spaces\n\n"), [" two-spaces"]);
+});
+
+test("rejects oversized lines and oversized accumulated events incrementally", () => {
+  assert.throws(
+    () => new SSEParser().push("x".repeat(1_000_001)),
+    /size limit/,
+  );
+  const parser = new SSEParser();
+  parser.push("data: " + "y".repeat(600_000) + "\n");
+  assert.throws(
+    () => parser.push("data: " + "y".repeat(500_000) + "\n\n"),
+    /size limit/,
+  );
+});
 test("rejects oversized stream frames and malformed provider payloads", () => {
   assert.throws(
     () => new SSEParser().push("x".repeat(1_000_001)),
