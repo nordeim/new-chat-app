@@ -16,9 +16,10 @@ Kimi Workspace solves a common problem: most chat starters stop at a single hard
 | ✨ | Feature | Description |
 |----|---------|-------------|
 | 🌊 | Streamed responses | Token-by-token SSE from NVIDIA NIM with a thinking indicator, stop control, and truncation notice |
-| 💾 | Saved conversations | Postgres-backed history with search across titles **and message content** (⌘K), rename, delete, and Markdown export |
-| 🖼️ | Image-aware composer | PNG/JPEG/WebP attachments under 2 MB, validated client-side and re-verified by magic bytes server-side |
+| 💾 | Saved conversations | Postgres-backed history grouped by day (Today / Yesterday / Previous 7 days / Older) with search across titles **and message content** (⌘K), rename, delete, and Markdown export |
+| 🖼️ | Image-aware composer | PNG/JPEG/WebP attachments up to 2 MB, validated client-side and re-verified by magic bytes server-side; message images open in a full-size lightbox |
 | 🎛️ | Model settings | Temperature, output-token limit, and reasoning-effort controls per message |
+| 📝 | Rich answers | GitHub-Flavored Markdown with mint-themed syntax highlighting and one-click code-block copy |
 | 🔒 | Session isolation | HTTP-only, SameSite=Strict cookie; only its SHA-256 digest is stored as the database owner |
 | 🛡️ | Hardened API | Same-origin writes, bounded bodies, zod-validated payloads, atomic one-generation-per-session lease |
 | 🧹 | Retention CLI | `npm run prune` removes idle sessions (cascade) and optionally stale conversations, with a structured log line |
@@ -30,9 +31,9 @@ Kimi Workspace solves a common problem: most chat starters stop at a single hard
 |-------|------------|---------|---------|
 | UI | Next.js (App Router) + React | 16 / 19 | Single client component workspace, server route handlers |
 | Language | TypeScript (strict) | 5.9 | End-to-end typed contracts |
-| Styling | Tailwind CSS (CSS-first) | 4.1 | Mint design tokens in `globals.css` |
+| Styling | Tailwind CSS (CSS-first) | 4.3 | Mint design tokens in `globals.css` |
 | Validation | zod | 4.6 | Shared client/server schemas |
-| Data | Drizzle ORM + `pg` | 0.45 / 8.20 | Parameterized queries, JSONB message storage, versioned migrations in `drizzle/` |
+| Data | Drizzle ORM + `pg` | 0.45 / 8.23 | Parameterized queries, JSONB message storage, versioned migrations in `drizzle/` |
 | Database | PostgreSQL | 14+ | Sessions, conversations |
 | AI | NVIDIA NIM (OpenAI-compatible) | — | `moonshotai/kimi-k3` streaming completions |
 | Testing | node:test · Playwright · axe | — | Unit, API-isolation, E2E + WCAG checks |
@@ -60,7 +61,10 @@ flowchart LR
 │   ├── 📄 layout.tsx               # Root layout + metadata
 │   └── 📄 page.tsx                 # Renders the workspace
 ├── 📂 components
-│   └── 📄 chat-workspace.tsx       # The complete client workspace (single component)
+│   ├── 📄 chat-workspace.tsx       # The workspace shell (composer, dialogs, sidebar)
+│   ├── 📄 markdown-message.tsx     # Memoized GFM + syntax-highlighted renderer with code copy
+│   ├── 📄 image-lightbox.tsx       # Radix full-size image preview
+│   └── 📄 navigation-frame.tsx     # Radix mobile navigation drawer
 ├── 📂 db
 │   ├── 📄 index.ts                 # pg Pool + Drizzle instance
 │   ├── 📄 schema.ts                # sessions & conversations tables
@@ -69,6 +73,9 @@ flowchart LR
     ├── 📄 server.ts                # Cookie session, origin guard, bounded body reader
     ├── 📄 validation.ts            # All zod schemas
     ├── 📄 sse.ts                    # SSE parser (shared by server and browser)
+    ├── 📄 history.ts               # Sidebar date grouping + relative timestamps
+    ├── 📄 markdown.ts              # Markdown node-text extraction (code copy)
+    ├── 📄 workspace-error.ts       # Load-failure copy (DB outage vs reload)
     └── 📄 types.ts                  # Shared types + default model settings
 ```
 
@@ -178,25 +185,36 @@ Limits: 100 conversations per workspace, 60 persisted messages per conversation,
 ## Testing
 
 ```bash
-npm test                                   # unit: schemas + SSE parser (node:test)
+npm test                                   # unit: schemas, SSE parser, history grouping, load-failure copy (node:test)
 npm run db:migrate                         # apply migrations (or db:generate first if schema changed)
 npm run build && npm start                 # required for E2E
-npm run test:e2e                           # Playwright: UI, API isolation, WCAG
+npm run test:e2e                           # Playwright: UI, API isolation, WCAG, streaming fixtures
 LIVE_SITE_URL=https://your-deployment.example npx playwright test tests/live-site.spec.ts
 npm audit --omit=dev                       # production dependency audit
 ```
 
-E2E prerequisites: a disposable test `DATABASE_URL` (fixtures are inserted and cleaned up), **no** `NVIDIA_API_KEY` (the missing-key UX is part of the spec), and `TEST_BASE_URL` for non-default origins. The streamed-answer tests use explicit transport fixtures; the GFM-table test additionally routes both API endpoints, so it runs without a database. `tests/live-site.spec.ts` is skipped entirely unless `LIVE_SITE_URL` is set and exercises a real deployment (read-only except one minimal chat send when the provider is configured).
+E2E prerequisites: a disposable test `DATABASE_URL` (fixtures are inserted and cleaned up), **no** `NVIDIA_API_KEY` (the missing-key UX is part of the spec), and `TEST_BASE_URL` for non-default origins. The streamed-answer, code-copy, lightbox, stop-control, malformed-frame, and degraded-API tests use explicit transport fixtures and run hermetically; the GFM-table test additionally routes both API endpoints, so it runs without a database. `tests/live-site.spec.ts` is skipped entirely unless `LIVE_SITE_URL` is set and exercises a real deployment (read-only except one minimal chat send when the provider is configured; its error race is scoped to the app's own banner because Next.js injects a global `role="alert"` route announcer).
 
 `GET /api/health` checks PostgreSQL connectivity; it does not call the provider or validate its credential.
 
 ## Project status & recent changes
 
-Latest verification (2026-09-10, audit pass 3): typecheck, lint, build, 15/15 unit tests, 16/16 Playwright tests locally (proxied-origin and mobile-nav regression suites included), a full provider-contract round-trip against NVIDIA (structured error path verified with a rejected key), and a clean production dependency audit. The live deployment's database outage (pass 2 H2) is resolved — `https://kimi-chat.jesspete.shop/api/health` returns `{"ok":true}`. Full evidence and the severity-ranked finding list live in [`docs/CODE_REVIEW_REPORT.md`](docs/CODE_REVIEW_REPORT.md).
+Latest verification (2026-09-10, audit pass 4): typecheck, lint, build, 22/22 unit tests, 24/24 Playwright tests locally (including new stop-control, malformed-stream, and image-rejection coverage), and 12/12 live-deployment E2E tests against `https://kimi-chat.jesspete.shop/` — including a full provider round-trip (streamed answer persisted, degraded-provider behavior observed and handled). Production dependency audit clean. Full evidence and the severity-ranked finding list live in [`docs/CODE_REVIEW_REPORT.md`](docs/CODE_REVIEW_REPORT.md).
 
 | Change | Notes |
 |--------|-------|
-| Proxy-aware same-origin checks | Same-origin writes now accept `x-forwarded-host` when the ingress rewrites `Host` (verified broken live: every browser send returned 403 behind Cloudflare). Pure `src/lib/origin.ts` with 7 unit tests + an API regression test |
+| Syntax-highlighted answers | Assistant Markdown now highlights code (rehype-highlight + highlight.js, mint theme) with a per-block copy control; the renderer is memoized so completed messages skip re-parsing during streaming |
+| Image lightbox | Message images open in a Radix full-size preview (focus trap, Escape, focus restore) |
+| Grouped history | Sidebar conversations grouped Today / Yesterday / Previous 7 days / Older with relative-time tooltips |
+| Workspace load-failure copy | Initial-load failures probe `/api/health` and distinguish a database outage from a generic failure |
+| Accessibility additions | Skip link to the composer, live character counter (AA-contrast token) — the counter color was fixed to meet 4.5:1 where the reference build shipped 3.16:1 |
+| Stop-button race fixed | Clicking Stop while a request hangs re-submitted the form (Chromium re-targets the click's activation to the replacement submit button); the busy flip is now deferred out of the click's input task — regression-tested with a hanging-socket fixture |
+| Curated stream errors | Malformed SSE frames from a degraded proxy now show "The response stream was interrupted…" instead of raw JSON parse text |
+| Live E2E hardened | The provider round-trip's error race is scoped to the app's own error banner (Next.js's global route announcer also has `role="alert"`), and its window now exceeds the server's 175s provider timeout |
+| Secret hygiene | A live-format `nvapi-` key embedded in `sample-build/docs/` was redacted (sibling of the pass-3 `docs/` redaction — rotation still pending); CI's secret scan now scopes to app code (reference dirs excluded by the same contract as tsconfig/eslint) |
+| Framework fingerprint off | `poweredByHeader: false` — `x-powered-by` no longer advertises Next.js |
+| Image copy aligned | Client, server, and schema copy all say "up to 2 MB" (the check permits exactly 2 MB) |
+| Proxy-aware same-origin checks | Same-origin writes accept `x-forwarded-host` when the ingress rewrites `Host` (verified broken live: every browser send returned 403 behind Cloudflare). Pure `src/lib/origin.ts` with 7 unit tests + an API regression test |
 | Modal mobile navigation | The mobile drawer is a Radix dialog: focus containment, Escape closes, focus restores to the opener, and an accessible close control lives inside the drawer |
 | Incremental SSE parser | Adopted from `sample-build`: LF/CRLF/CR parity, split CRLF across chunks, exactly-one-space `data:` prefix handling, incremental size accounting |
 | Hardened live E2E | The streaming test waits for a nonce inside an assistant message (no more false "streamed" from the user bubble), fails loudly on error banners, and verifies persistence |

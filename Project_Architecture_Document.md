@@ -67,7 +67,7 @@ No speculative “e.g.” — every entry is locked and verified against `packag
 
 | Layer | Technology | Version | Key Rationale |
 |-------|------------|---------|---------------|
-| **Web Framework** | Next.js (App Router) | `16.3.4` (Turbopack) | App Router route handlers (`src/app/api/*`) give per-route `runtime = "nodejs"` + `maxDuration = 180` for SSE; file-based routing eliminates manual router config; `next typegen` keeps route params typed (runs before `tsc`). Chosen over Remix/SvelteKit because RSC streaming + Turbopack + Vercel-grade headers fit this SSE-heavy app. |
+| **Web Framework** | Next.js (App Router) | `16.3.4` (Turbopack) | App Router route handlers (`src/app/api/*`) give per-route `runtime = "nodejs"` + `maxDuration = 600` for SSE; file-based routing eliminates manual router config; `next typegen` keeps route params typed (runs before `tsc`). Chosen over Remix/SvelteKit because RSC streaming + Turbopack + Vercel-grade headers fit this SSE-heavy app. |
 | **UI Runtime** | React | `19.3.0` + `react-dom 19.3.0` | Single client component (`chat-workspace.tsx`) with explicit loading/error/empty/success states; React 19 form/event refinements without external state lib. |
 | **Language** | TypeScript (strict) | `5.9.3` (`strict: true`, `noEmit: true`, `isolatedModules: true`, `esModuleInterop: true`, `target: ES2017`, `module: esnext`, `moduleResolution: bundler`) | `strict` + `no any` + zod at boundaries eliminates runtime type drift; `isolatedModules` keeps `node --experimental-strip-types` viable for unit tests. |
 | **Styling** | Tailwind CSS (CSS-first) + PostCSS | `4.3.3` + `@tailwindcss/postcss 4.3.3`, `postcss 8.5.28` | CSS-first `@theme` in `src/app/globals.css` — tokens (`--mint`, `--green`, `--canvas`) are design-system single source; no `tailwind.config.js` to drift. Chosen over CSS modules because mint palette + Radix + single component benefit from token reuse. |
@@ -76,7 +76,7 @@ No speculative “e.g.” — every entry is locked and verified against `packag
 | **Data / ORM** | Drizzle ORM + `pg` | `drizzle-orm 0.45.2`, `pg 8.23.0`, `drizzle-kit 0.31.10`, `pg` Pool cached on `globalThis` in dev | Parameterized queries only, JSONB `messages` storage, versioned SQL migrations in `drizzle/` (journal-driven). Chosen over Prisma because SQL stays explicit (e.g., `jsonb_array_elements` search) and `pg` Pool lifecycle is controllable. |
 | **Database** | PostgreSQL | `17-alpine` (local), `14+` supported | `chat_sessions` + `conversations` with FK cascade, `pgcrypto` for `gen_random_uuid()`, `pg_trgm` for future fuzzy search. Volume `chat_data`, healthcheck `pg_isready -U chat_user -d chat_db` every 5s. |
 | **AI Provider** | NVIDIA NIM (OpenAI-compatible) | endpoint `https://integrate.api.nvidia.com/v1/chat/completions`, model `moonshotai/kimi-k3`, `stream: true`, `Accept: text/event-stream` | Server-only `NVIDIA_API_KEY` (never `NEXT_PUBLIC_`); reasoning `max` by default, `temperature 1`, `max_tokens 16384`; image via `image_url` blocks; `reasoning_content` persisted for multi-turn but stripped from browser. |
-| **Testing — Unit** | `node:test` + `node --experimental-strip-types` | Node ≥22 required | No extra runner; `.mjs` imports `.ts` directly with explicit `.ts` extensions; fast (15 tests ~300 ms). |
+| **Testing — Unit** | `node:test` + `node --experimental-strip-types` | Node ≥22 required | No extra runner; `.mjs` imports `.ts` directly with explicit `.ts` extensions; fast (22 tests ~300 ms). |
 | **Testing — E2E / WCAG** | Playwright + `@axe-core/playwright` | `@playwright/test 1.63.0`, `@axe-core/playwright 4.13.0` | `workspace.spec.ts` (CRUD, isolation, search, retention, WCAG), `stream-ui.spec.ts` (hermetic), `live-site.spec.ts` (gated by `LIVE_SITE_URL`). Single worker, 60 s timeout, `reuseExistingServer: true`. |
 | **Build Tooling** | Next.js Turbopack + `next typegen` + `tsc` + ESLint flat | `eslint 9.39.5`, `eslint-config-next 16.3.4` | `npm run typecheck` = `next typegen && tsc --noEmit` so route types can never be stale; `eslint.config.mjs` globalIgnores `skills/sample-build/docs`. |
 | **Infra — Local** | Docker Compose + `pg 17-alpine` + named volume | `chat_data` + `chat_net` bridge | `5433:5432` avoids host `5432` clash with Scandi Haven; healthcheck 10 retries; init script `infrastructure/postgres/init/00-create-extensions.sql`. |
@@ -175,7 +175,7 @@ flowchart TB
 
   subgraph Ext["External"]
     NIM["NVIDIA NIM\nhttps://integrate.api.nvidia.com/v1/chat/completions\nmoonshotai/kimi-k3, stream, reasoning_content"]
-    STRIPE["Stripe (CSP allow: js.stripe.com, static.cloudflareinsights.com)\n— not used by Kimi runtime, CSP pre-seeded for Scandi Haven sibling"]
+    EXTERNAL["No third-party script origins\n— CSP deliberately minimal (frame-ancestors, base-uri, object-src)"]
   end
 
   UI -->|"POST /api/chat (SSE)\nOrigin + sec-fetch-site"| TLS
@@ -200,7 +200,7 @@ flowchart TB
 | TLS Ingress | Cloudflare/nginx/ALB (operator) | Horizontally | **Must** preserve public `Host` or forward `x-forwarded-host`; otherwise origin gate 403s every browser write (README troubleshooting) |
 | App Router | Next.js 16 `node` runtime, `maxDuration 180` on `/api/chat`, Pool cached on `globalThis` in dev | Single region primary; stateless handlers + DB lease for concurrency | One generation per session enforced by atomic `UPDATE … WHERE busyUntil < now() AND lastRequest < now-3s RETURNING`; lease 195 s, provider timeout 175 s, spacing 3 s |
 | Data | `postgres:17-alpine`, `chat_data` volume, `chat_net` bridge, `5433:5432` | Single primary; index `owner,updatedAt` for list/search | `pgcrypto` for `gen_random_uuid()`, `pg_trgm` pre-installed for future fuzzy search; retention via `pruneIdleSessions` / `pruneStaleConversations` (no cron yet) |
-| Provider | NVIDIA NIM `kimi-k3`, Bearer `NVIDIA_API_KEY` server-only | External quota/billing; no automatic retries | Streaming integrity: only `completed && assistant.content` path persists; `reasoning_content` persisted then stripped; `Content exceeded size 600k` throws |
+| Provider | NVIDIA NIM `kimi-k3`, Bearer `NVIDIA_API_KEY` server-only | External quota/billing; no automatic retries | Streaming integrity: only `completed && assistant.content` path persists; `reasoning_content` persisted then stripped; `Content exceeded size limit` throws at 1 200 000 chars |
 
 ---
 
@@ -237,7 +237,7 @@ new-chat-app/
 │   └── meta/                     # _journal.json + 0000_snapshot.json
 ├── eslint.config.mjs             # Flat config, next/core-web-vitals, globalIgnores .next/out/build/next-env.d.ts/skills/sample-build/docs
 ├── infrastructure/postgres/init/00-create-extensions.sql ← pgcrypto + pg_trgm (IF NOT EXISTS, runs once on first docker entrypoint)
-├── next.config.ts                # headers: nosniff, DENY, HSTS max-age=63072000 includeSubDomains preload, strict-origin-when-cross-origin, permissions-policy, CSP frame-ancestors 'none'; base-uri 'self'; object-src 'none'
+├── next.config.ts                # headers: nosniff, DENY, HSTS max-age=63072000 includeSubDomains, strict-origin-when-cross-origin, permissions-policy, CSP frame-ancestors 'none'; base-uri 'self'; object-src 'none'
 ├── next-env.d.ts                 # Auto-generated by next typegen
 ├── package.json                  # Scripts: dev/build/start/lint/typecheck (next typegen + tsc)/test/test:e2e/db:generate|migrate|seed/prune; deps: next 16.3.4, react 19, drizzle-orm, pg, zod, lucide-react, react-markdown, radix-dialog; dev: tailwindcss 4, playwright, axe-core, drizzle-kit, typescript
 ├── playwright.config.ts          # baseURL TEST_BASE_URL ?? localhost:3000, workers 1, fullyParallel false, timeout 60s, chromium, webServer npm start when TEST_BASE_URL unset (reuseExistingServer true), trace retain-on-failure
@@ -271,7 +271,7 @@ new-chat-app/
 │       ├── types.ts              # ChatMessage (id, role user|assistant, content, image?, reasoning?), ConversationSummary, ChatSettings, defaultSettings (temp 1, maxTokens 16384, reasoningEffort max)
 │       └── validation.ts         # imageSchema (2_800_000, png|jpeg|webp data-uri), chatInputSchema (conversationId uuid?, content 1-16000 trimmed, image?, settings strict), titleSchema (1-100), idSchema uuid, providerChunkSchema (reasoning_content)
 ├── tests/
-│   ├── core.test.mjs             # node:test — chatInputSchema, titleSchema, SSE LF/CRLF/CR + split-CRLF + comment + size-limit, providerChunkSchema
+│   ├── core.test.mjs             # node:test — chatInputSchema, titleSchema, SSE LF/CRLF/CR + split-CRLF + comment + size-limit, providerChunkSchema, history grouping, formatRelativeTime, getNodeText, workspaceLoadError
 │   ├── origin.test.mjs           # node:test — isSameOriginRequest 7 tests (direct, proxied, chained x-forwarded-host, http/https vs ftp, cross-site, missing/malformed, mismatch)
 │   ├── workspace.spec.ts         # Playwright — welcome/prompt starters/settings, missing-key UX, image attach/remove, mobile viewport + Escape restore, WCAG via axe, CRUD isolation (two contexts), API 400/403, x-forwarded-host regression, ?q= search (title+content, owner-isolated), search dialog (xylophone), retention (idle cascade + stale)
 │   ├── stream-ui.spec.ts         # Hermetic — mocked APIs, streamed answer + GFM table + error state WCAG + non-JSON friendly copy
@@ -477,13 +477,13 @@ interface ChatSettings {
 | Guard | Value | Enforcer |
 |-------|-------|----------|
 | Request body | 3 MB | `readJson(req, 3_000_000)` → 413 |
-| Prompt chars | 1–16 000 | `zod` + `charInputSchema` → 400 |
+| Prompt chars | 1–16 000 | `zod` + `chatInputSchema` → 400 |
 | Image (chars) | ≤2 800 000 | `imageSchema` regex → 400 |
 | Image (bytes) | ≤2 MB + magic-byte PNG/JPEG/WEBP | `route.ts` `Buffer` check → 400 |
-| History per conversation | 60 messages OR 8 000 000 JSON chars | `route.ts` → 400 “Start a new chat” |
+| History per conversation | 60 messages OR 16 000 000 JSON chars | `route.ts` → 400 “Start a new chat” |
 | Conversations per workspace | 100 (`count(*)::int`) | `route.ts` → 400 “Delete an older chat” |
-| Response chars | 600 000 (`content + reasoning`) | `route.ts` inside `consume()` → “Response size limit exceeded” → error event, not persisted |
-| Provider `max_tokens` | 256–16 384 | `validation` strict enum/number |
+| Response chars | 1 200 000 (`content + reasoning`) | `route.ts` inside `consume()` → “Response size limit exceeded” → error event, not persisted |
+| Provider `max_tokens` | 256–256 000 | `validation` strict enum/number |
 | Title rename | 1–100 | `titleSchema` → 400 |
 | Conversation search term | 200 chars, wildcards escaped | `searchPattern` |
 
@@ -538,7 +538,7 @@ Additional accents: `.peach #faede4/#bd8d71`, `.lavender #f0edf9/#9b8cb2`, `.yel
 
 - **Keyframes:** `pulse` (thinking dots `opacity 0.4→1`, `translateY -3px`, 1.4 s, stagger 0.2 s), `spin` (`rotate 360`, 1.5 s linear, for `Loader2`), `fade-in` (`opacity 0→1`, 0.15–0.2 s for dialogs/toast), `welcome-in` (`opacity 0→1` + `translateY 7px→0`, 0.6 s ease-out for welcome).
 - **Transitions:** `button` `background/color/box-shadow/transform 0.18s`; `composer` `border/box-shadow 0.2s`; `starter-card:hover translateY(-3px)` + `box-shadow 0 5px 18px #24391d08`.
-- **Reduced motion:** `playwright.config.ts` `reducedMotion: "reduce"` for E2E; no `prefers-reduced-motion` media query yet (backlog).
+- **Reduced motion:** `playwright.config.ts` `reducedMotion: "reduce"` for E2E; a global `prefers-reduced-motion: reduce` media query neutralizes animations (globals.css).
 
 ### 5.5 Responsive
 
@@ -592,7 +592,7 @@ Additional accents: `.peach #faede4/#bd8d71`, `.lavender #f0edf9/#9b8cb2`, `.yel
 | **IDOR (owner bypass)** | Every table access via `eq(owner, hash)`; delete uses `FOR UPDATE` + `busyUntil` | E2E two contexts: second → 404 on first’s `GET/PATCH/DELETE` |
 | **Injection (SQL)** | Drizzle parameterized + `searchPattern` escapes `\ % _` → `ilike` + `sql exists (jsonb_array_elements… ilike)` with bound param | `rg` no raw SQL |
 | **Injection (XSS via model Markdown)** | `react-markdown` sanitizes raw HTML; `a` forced `target _blank noopener noreferrer`; `img` replaced with `[Image: alt]` | Component code |
-| **DoS (oversized body/image/event)** | `readJson` 3 MB → 413, image 2.8M chars + 2 MB bytes + magic-byte, SSE `MAX 1_000_000` incremental, response 600k, 60 msgs/8 MB history, 100 convos | `route.ts` + `SSEParser` |
+| **DoS (oversized body/image/event)** | `readJson` 3 MB → 413, image 2.8M chars + 2 MB bytes + magic-byte, SSE `MAX 1_000_000` incremental, response 1.2M chars, 60 msgs/16 MB history, 100 convos | `route.ts` + `SSEParser` |
 | **Credential leak** | No `NEXT_PUBLIC_` key, no log of content/cookie/key, `errorResponse` generic on 500 with `requestId`, `.env` gitignored + untracked (after late remediation), CI secret scan | `rg NEXT_PUBLIC` empty, `git grep` pattern on app code 0 hits |
 | **Clickjacking** | `X-Frame-Options: DENY` + CSP `frame-ancestors 'none'` | `next.config.ts` + `curl -sI` |
 | **MIME sniff** | `X-Content-Type-Options: nosniff` | `next.config.ts` |
@@ -605,7 +605,7 @@ Additional accents: `.peach #faede4/#bd8d71`, `.lavender #f0edf9/#9b8cb2`, `.yel
 
 | Category | Files | Tests | Framework | Location |
 |----------|-------|-------|-----------|----------|
-| **Unit** | 2 | 15 | `node:test` + `--experimental-strip-types` | `tests/core.test.mjs` (8), `tests/origin.test.mjs` (7) |
+| **Unit** | 2 | 22 | `node:test` + `--experimental-strip-types` | `tests/core.test.mjs` (15), `tests/origin.test.mjs` (7) |
 | **E2E — Workspace (DB-backed)** | 1 | 12 | Playwright `request` + Drizzle fixtures | `tests/workspace.spec.ts` |
 | **E2E — Stream UI (hermetic)** | 1 | 4 | Playwright (mocks both APIs) | `tests/stream-ui.spec.ts` |
 | **E2E — Live Site (gated)** | 1 | 12 | Playwright + `LIVE_SITE_URL` + `axe` | `tests/live-site.spec.ts` (skipped unless `LIVE_SITE_URL` set) |
@@ -616,7 +616,7 @@ Additional accents: `.peach #faede4/#bd8d71`, `.lavender #f0edf9/#9b8cb2`, `.yel
 - **Unit (node:test, strip-types):** Direct import of `../src/lib/sse.ts`, `../src/lib/validation.ts`, `../src/lib/origin.ts` with explicit `.ts` extension. Patterns:
   - `chatInputSchema` trims, rejects empty/oversized/unknown/malformed/image URL, rejects `maxTokens 20000`.
   - `titleSchema` boundaries `1–100` (`100` ok, `` empty 400, `101` 400).
-  - `SSEParser` fragmented CRLF + multiline, lone-CR, CRLF split across chunks, comment `: keepalive`, exactly-one-space `data:` (`no-space` → `no-space`, `  two-spaces` → ` two-spaces`), incremental size rejects (1_000_001 line, 600k+500k event).
+  - `SSEParser` fragmented CRLF + multiline, lone-CR, CRLF split across chunks, comment `: keepalive`, exactly-one-space `data:` (`no-space` → `no-space`, `  two-spaces` → ` two-spaces`), incremental size rejects (1_000_001-char line, 600k+500k accumulated event).
   - `isSameOriginRequest` 7 cases (direct, proxied, chained, http vs ftp/javascript, cross-site, missing/malformed/null, mismatch).
 
 - **E2E — DB-backed (requires `npm run build && npm start` + disposable `DATABASE_URL`, no `NVIDIA_API_KEY` by design):** Uses `TEST_BASE_URL ?? http://localhost:3000`, `baseURL` + `reuseExistingServer: true`, `db`/`pool` + `createHash("sha256")` owner helpers, `eq` cleanup. Key suites (from `workspace.spec.ts`):
@@ -855,7 +855,7 @@ curl http://localhost:3000/api/health  # {"ok":true}
 | `src/db/seed.ts` | ~50 | Idempotent seed — injected `{db,tables}` |
 | `drizzle/0000_flimsy_sage.sql` | ~15 | CREATE `chat_sessions`, `conversations`, FK cascade, `owner_updated` index |
 | `drizzle.config.ts` | ~15 | `defineConfig({ dialect:"postgresql", schema:"./src/db/schema.ts", out:"./drizzle" })` reads `DATABASE_URL` via `dotenv/config` |
-| `next.config.ts` | ~25 | Headers: nosniff, DENY, HSTS `63072000; includeSubDomains; preload`, referrer, permissions-policy, CSP |
+| `next.config.ts` | ~25 | Headers: nosniff, DENY, HSTS `63072000; includeSubDomains`, referrer, permissions-policy, CSP |
 | `tsconfig.json` | ~40 | `ES2017`, `bundler`, `strict`, `noEmit`, `@/* → src/*`, excludes `skills/sample-build/docs` |
 | `eslint.config.mjs` | ~15 | Flat + `next/core-web-vitals`, `globalIgnores` non-app |
 | `playwright.config.ts` | ~30 | `testDir ./tests`, `baseURL TEST_BASE_URL ?? localhost:3000`, workers 1, webServer `npm start` when no `TEST_BASE_URL`, `reuseExistingServer true` |

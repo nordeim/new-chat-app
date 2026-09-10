@@ -6,7 +6,7 @@ IMPORTANT: File is read fresh for every conversation. Be brief and practical.
 
 ## Core Identity & Purpose
 
-A production-grade chat workspace: streamed NVIDIA NIM responses (`moonshotai/kimi-k3` via the OpenAI-compatible endpoint), saved conversations with search/rename/delete/export, image-aware composer, and a calm mint-accented UI. Conversations are isolated by a secure browser-session cookie; only a SHA-256 digest of the cookie token reaches the database. Maintained as a clean Next.js/PostgreSQL starter suitable for enterprise adoption work.
+A production-grade chat workspace: streamed NVIDIA NIM responses (`moonshotai/kimi-k3` via the OpenAI-compatible endpoint), saved conversations with search/rename/delete/export, image-aware composer with a full-size lightbox, syntax-highlighted GFM answers with code-copy, date-grouped history, and a calm mint-accented UI. Conversations are isolated by a secure browser-session cookie; only a SHA-256 digest of the cookie token reaches the database. Maintained as a clean Next.js/PostgreSQL starter suitable for enterprise adoption work.
 
 Stack: Next.js 16 App Router · React 19 · TypeScript (strict) · Tailwind v4 (CSS-first) · Drizzle ORM · PostgreSQL · zod v4 · Playwright + node:test.
 
@@ -47,13 +47,15 @@ Stack: Next.js 16 App Router · React 19 · TypeScript (strict) · Tailwind v4 (
 - Avoid explicit return types unless inference fails.
 
 **React 19 (client component)**
-- The workspace is a single client component (`src/components/chat-workspace.tsx`): handle loading/error/empty/success states explicitly; disable controls during async work; keep derived state out of `useState`.
+- The workspace is composed of `chat-workspace.tsx` (shell: composer, dialogs, sidebar) plus extracted pieces (`markdown-message.tsx`, `image-lightbox.tsx`, `navigation-frame.tsx`): handle loading/error/empty/success states explicitly; disable controls during async work; keep derived state out of `useState`.
 - Effects must not call `setState` synchronously (lint rule `react-hooks/set-state-in-effect` is an error here).
+- The send `finally` defers the busy flip by one macrotask (`setTimeout 0`): swapping the stop button for the submit button inside the click's input task makes Chromium re-target the click's activation and re-submit the form. Do not "simplify" this back to a synchronous flip.
 
 **Next.js 16 (App Router)**
-- Route handlers under `src/app/api/*` with `export const runtime = "nodejs"` where streaming is used (`maxDuration = 180` on `/api/chat`).
+- Route handlers under `src/app/api/*` with `export const runtime = "nodejs"` where streaming is used (`maxDuration = 600` on `/api/chat`; provider timeout 175s, 590s for long outputs).
 - `npm run typecheck` runs `next typegen` before `tsc --noEmit`; use it after every route change.
-- Security headers and CSP in `next.config.ts`; keep them intact.
+- Security headers and CSP in `next.config.ts`; keep them intact (`poweredByHeader: false` is deliberate).
+- Next.js injects a global route announcer with `role="alert"` — never assert against `getByRole("alert")` unscoped in tests; target `.error-banner`.
 
 **Tailwind v4 (CSS-first)**
 - No `tailwind.config.js`; tokens and component styles live in `src/app/globals.css` (`--mint` palette). Reuse tokens; do not hardcode colors.
@@ -134,10 +136,10 @@ curl -s http://localhost:3000/api/conversations | grep configured
 
 ### Test Pyramid
 
-- Unit (`tests/core.test.mjs`, `tests/origin.test.mjs`): zod schemas, SSE parser edge cases (LF/CRLF/CR, split chunks, size limits), and the pure same-origin gate — fast, no services.
+- Unit (`tests/core.test.mjs`, `tests/origin.test.mjs`; 22 total): zod schemas, SSE parser edge cases (LF/CRLF/CR, split chunks, size limits), the pure same-origin gate, sidebar history grouping + relative time, markdown node-text extraction, and load-failure copy selection — fast, no services.
 - **API/integration** (`tests/workspace.spec.ts`): session isolation, ownership, origin enforcement, cookie flags, `?q=` search, retention pruning — Playwright request context + Drizzle fixtures.
-- **E2E/UI** (`tests/workspace.spec.ts`, `tests/stream-ui.spec.ts`): user journeys, WCAG AA via axe (welcome, dialogs, **and the error state**), streamed-answer rendering through a transport fixture (no live provider needed).
-- **Live deployment** (`tests/live-site.spec.ts`): env-gated via `LIVE_SITE_URL`; validates a real deployment (headers, API contract, session isolation, optional single provider round-trip).
+- **E2E/UI** (`tests/workspace.spec.ts`, `tests/stream-ui.spec.ts`; 24 local total): user journeys, WCAG AA via axe (welcome, dialogs, **and the error state**), streamed-answer rendering through transport fixtures (no live provider needed) — including stop-control abort, malformed-frame copy, code-copy, lightbox, skip link, character counter, and DB-outage copy.
+- **Live deployment** (`tests/live-site.spec.ts`): env-gated via `LIVE_SITE_URL`; validates a real deployment (headers, API contract, session isolation, and one provider round-trip when configured — its error race is scoped to `.error-banner` because of the route announcer above).
 
 ### Test Commands
 

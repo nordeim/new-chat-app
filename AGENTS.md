@@ -47,7 +47,12 @@ Verification order: `npm run typecheck` → `npm run lint` → `npm test` → `n
 - `scripts/migrate.mjs` + `scripts/db-setup.mjs` — wrappers for `db:migrate` / `db:setup`. Preflight `DATABASE_URL` + `select 1` with curated JSON errors; post-migrate they log `{hash, sessions, conversations}` / `{migrationsApplied, inserted}` so the fast no-op spinner (`[✓]`) is self-explanatory.
 - `src/lib/validation.ts` — all zod schemas, shared by server and unit tests.
 - `src/lib/sse.ts` — SSE parser handling LF/CRLF/CR separators, events split across network chunks, and multi-line data with incremental size limits; used by BOTH the API route and the browser client. Changes affect both sides.
-- `src/components/chat-workspace.tsx` — the entire client UI (single component, ~1500 lines). Client-side zod schemas validate every API and stream payload.
+- `src/components/chat-workspace.tsx` — the workspace shell (composer, dialogs, sidebar, streaming state machine). Client-side zod schemas validate every API and stream payload; malformed stream events are converted to curated copy before reaching the banner.
+- `src/components/markdown-message.tsx` — memoized GFM + `rehype-highlight` renderer with a per-block copy control; completed messages skip re-parsing while a sibling streams. Its hljs theme and code-block styles live in `globals.css`.
+- `src/components/image-lightbox.tsx` — Radix full-size image preview (focus trap, Escape, focus restore); opened from message images in `chat-workspace.tsx`.
+- `src/lib/history.ts` — pure sidebar grouping (`Today/Yesterday/Previous 7 days/Older`) + relative timestamps; invalid timestamps bucket to Today.
+- `src/lib/markdown.ts` — `getNodeText`, used by the code-copy control to extract plain text from React nodes.
+- `src/lib/workspace-error.ts` — maps a `/api/health` probe result to load-failure copy (DB outage vs reload); `chat-workspace.tsx` calls it in the `refresh()` catch.
 - `src/components/navigation-frame.tsx` — wraps the sidebar in a Radix dialog while the mobile drawer is open (focus containment, Escape, focus restore to the "Open navigation" control). The Radix backdrop is aria-hidden, so the drawer carries its own close button (`.sidebar-close`, visible only while open).
 - `src/db/schema.ts` — Drizzle schema. `messages` is JSONB on `conversations`; cascade delete via session FK.
 
@@ -55,6 +60,9 @@ Verification order: `npm run typecheck` → `npm run lint` → `npm test` → `n
 
 - `tsconfig.json` and `eslint.config.mjs` deliberately exclude `skills/`, `sample-build/`, and `docs/` — they are reference material uploaded into the workspace, not part of the app. Do not remove these excludes; the build type-checks everything matched by `**/*.ts`.
 - After lint autofix, re-run formatting/order-sensitive gates before committing; restage files so the index matches the working tree.
+- The send flow's `finally` defers `setBusy(false)` / `abortRef.current = null` by one macrotask (`setTimeout 0`). Swapping the stop button for the submit button inside the click's input task makes Chromium re-target the click's activation to the new default button and re-submit the form (a duplicate send). Keep the deferral; a regression test holds it (`stream-ui.spec.ts` stop-control case).
+- Never assert against unscoped `getByRole("alert")` in Playwright tests: Next.js injects a global route announcer with `role="alert"` that is always present and empty. Target `.error-banner` instead.
+- UI copy limits say "up to 2 MB" for images (the check allows exactly 2 MB) — keep client, server, and schema copy identical.
 - Error messages returned to clients are user-facing copy (specific, actionable). Do not replace them with generic text or leak provider internals.
 - Logs are structured JSON with `operation`, ids, and error types only — never message contents, cookies, or keys.
 - Provider reasoning (`reasoning_content`) is persisted for multi-turn context but stripped from every browser response (`conversations/[id]` GET maps it out; `done` event sends content only).
