@@ -156,9 +156,21 @@ npm run test:e2e                           # Playwright: UI, API isolation, WCAG
 npm audit --omit=dev                       # production dependency audit
 ```
 
-E2E prerequisites: a disposable test `DATABASE_URL` (fixtures are inserted and cleaned up), **no** `NVIDIA_API_KEY` (the missing-key UX is part of the spec), and `TEST_BASE_URL` for non-default origins. The streamed-answer test uses an explicit transport fixture and does not verify live provider inference.
+E2E prerequisites: a disposable test `DATABASE_URL` (fixtures are inserted and cleaned up), **no** `NVIDIA_API_KEY` (the missing-key UX is part of the spec), and `TEST_BASE_URL` for non-default origins. The streamed-answer tests use explicit transport fixtures; the GFM-table test additionally routes both API endpoints, so it runs without a database.
 
 `GET /api/health` checks PostgreSQL connectivity; it does not call the provider or validate its credential.
+
+## Project status & recent changes
+
+Latest verification (2026-09-10): typecheck, lint, build, 5/5 unit tests, 9/9 Playwright tests (including axe WCAG 2.2 AA and session-isolation suites), and a clean production dependency audit. Full evidence and the severity-ranked finding list live in [`docs/CODE_REVIEW_REPORT.md`](docs/CODE_REVIEW_REPORT.md).
+
+| Change | Notes |
+|--------|-------|
+| Security remediation | Removed a committed SSH private key from `docs/`; secret patterns ignored. **The exposed key must still be rotated by the operator** — removal does not unpublish git history |
+| Build-gate repair | `skills/`, `sample-build/`, `docs/` excluded from `tsc` and ESLint; `next typegen` folded into `npm run typecheck` |
+| Markdown polish | GitHub-Flavored Markdown (tables, task lists, strikethrough) renders in streamed answers |
+| Test tooling | `playwright.config.ts`, `npm test`, `npm run test:e2e`, `.env.example`, MIT `LICENSE` |
+| API hardening | Rename endpoint now sets `Cache-Control: no-store` like all other data responses |
 
 ## Design system
 

@@ -51,3 +51,5 @@ Verification order: `npm run typecheck` → `npm run lint` → `npm test` → `n
 - There is no `tailwind.config.js`; Tailwind v4 is wired through PostCSS and design tokens live in `src/app/globals.css` (`--mint` palette).
 - Do not weaken gates to make them pass (no `@ts-ignore`, no disabling rules, no deleting tests). Fix root causes.
 - Keep all commits on `main`.
+- Operational debt: a private key was once committed at `docs/ssh-key.txt` (removed from tracking; still in git history — see `docs/CODE_REVIEW_REPORT.md`). Treat rotation as pending until the operator confirms it; never reintroduce key material.
+- Findings from the latest tiered audit and their status live in `docs/CODE_REVIEW_REPORT.md`; consult it before planning work in this repo.
