@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useDeferredValue, useState } from "react";
+import { memo, useDeferredValue, useEffect, useRef, useState } from "react";
 import Markdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
@@ -12,13 +12,20 @@ function CodeBlock({
   ...props
 }: React.ComponentPropsWithoutRef<"pre">) {
   const [copied, setCopied] = useState(false);
+  const copiedTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const codeText = getNodeText(children).replace(/\n$/, "");
+
+  useEffect(
+    () => () => clearTimeout(copiedTimer.current),
+    [],
+  );
 
   async function copyCode() {
     try {
       await navigator.clipboard.writeText(codeText);
       setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
+      clearTimeout(copiedTimer.current);
+      copiedTimer.current = setTimeout(() => setCopied(false), 1500);
     } catch {
       // Clipboard can be missing in insecure contexts; the pre remains selectable.
     }

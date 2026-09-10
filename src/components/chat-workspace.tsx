@@ -262,6 +262,7 @@ export default function ChatWorkspace() {
   const [rename, setRename] = useState("");
   const [mutationBusy, setMutationBusy] = useState(false);
   const [copied, setCopied] = useState<string>();
+  const copiedTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const [lightbox, setLightbox] = useState<{ src: string; alt: string }>();
   const textarea = useRef<HTMLTextAreaElement>(null);
   const fileInput = useRef<HTMLInputElement>(null);
@@ -358,6 +359,7 @@ export default function ChatWorkspace() {
     return () => clearTimeout(timer);
   }, [toast]);
   useEffect(() => () => abortRef.current?.abort(), []);
+  useEffect(() => () => clearTimeout(copiedTimer.current), []);
 
   const newChat = useCallback(() => {
     if (busy) return;
@@ -652,7 +654,8 @@ export default function ChatWorkspace() {
     try {
       await navigator.clipboard.writeText(message.content);
       setCopied(message.id);
-      setTimeout(() => setCopied(undefined), 2000);
+      clearTimeout(copiedTimer.current);
+      copiedTimer.current = setTimeout(() => setCopied(undefined), 2000);
     } catch {
       setToast(
         "Clipboard access is unavailable. Select the response to copy it.",
