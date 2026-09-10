@@ -12,7 +12,7 @@ Next, meticulously plan to create a comprehensive remediation plan with a detail
 
 Next, update the relevant documentation to ensure alignment with the remediated codebase.
 
-Finally, `git commit` all code and document changes locally and then `git push` them to my GitGub repo `git@github.com:nordeim/new-chat-app.git` using the attached ssh key `docs/ssh-key.txt` and wrapper script `skills/how-to-git-push-using-ssh-wrapper/scripts/ssh_git_wrapper_v3.py`.
+Finally, `git commit` all code and document changes locally and then `git push` them to my GitHub repo `git@github.com:nordeim/new-chat-app.git` using the attached ssh key `docs/ssh-key.txt` and wrapper script `skills/how-to-git-push-using-ssh-wrapper/scripts/ssh_git_wrapper_v3.py`.
 
 Do not create any new git branch. All git commits must be to the main branch.
 
@@ -30,7 +30,7 @@ Review and validate the remediation plan against the codebase again to ensure al
 
 Next, update the relevant documentation to ensure alignment with the remediated codebase.
 
-Finally, `git commit` all code and document changes locally and then `git push` them to my GitGub repo `git@github.com:nordeim/new-chat-app.git` using the attached ssh key `ssh-key.txt` and wrapper script `skills/how-to-git-push-using-ssh-wrapper/scripts/ssh_git_wrapper_v3.py`.
+Finally, `git commit` all code and document changes locally and then `git push` them to my GitHub repo `git@github.com:nordeim/new-chat-app.git` using the attached ssh key `ssh-key.txt` and wrapper script `skills/how-to-git-push-using-ssh-wrapper/scripts/ssh_git_wrapper_v3.py`.
 
 Do not create any new git branch. All git commits must be to the main branch.
 
