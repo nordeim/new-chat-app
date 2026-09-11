@@ -1,29 +1,25 @@
 $ git pull
-remote: Enumerating objects: 68, done.
-remote: Counting objects: 100% (68/68), done.
-remote: Compressing objects: 100% (17/17), done.
-remote: Total 46 (delta 27), reused 46 (delta 27), pack-reused 0 (from 0)
-Unpacking objects: 100% (46/46), 20.37 KiB | 401.00 KiB/s, done.
+remote: Enumerating objects: 50, done.
+remote: Counting objects: 100% (50/50), done.
+remote: Compressing objects: 100% (9/9), done.
+remote: Total 31 (delta 21), reused 31 (delta 21), pack-reused 0 (from 0)
+Unpacking objects: 100% (31/31), 18.08 KiB | 234.00 KiB/s, done.
 From github.com:nordeim/new-chat-app
-   6e1d0df..eb654aa  main       -> origin/main
-Updating 6e1d0df..eb654aa
+   986bc45..c88a19b  main       -> origin/main
+Updating 986bc45..c88a19b
 Fast-forward
- .github/workflows/ci.yml            |   7 +++++++
- AGENTS.md                           | 169 +++++----------------------------------------------------------------------------------------------------------------------------------------------------------
- CLAUDE.md                           |   6 +++---
- README.md                           | 172 ++++++++++++++++++++++++++++++------------------------------------------------------------------------------------------------------------------------------------
- docs/CODE_REVIEW_REPORT.md          | 177 ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++-------------------------------------------------------------------------------------------
- src/app/globals.css                 |   9 +++++++++
- src/components/chat-workspace.tsx   |  27 ++++++++++++++------------
- src/components/navigation-frame.tsx |  46 ++++++++++++++++++++++++++++++++++++++++++++
- src/lib/origin.ts                   |  21 ++++++++++++++++++++
- src/lib/server.ts                   |  14 ++++++++------
- src/lib/sse.ts                      |  65 +++++++++++++++++++++++++++++++++++++++++++++----------------
- tests/core.test.mjs                 |  29 ++++++++++++++++++++++++++++
- tests/live-site.spec.ts             |  75 ++++++++++++++++++++++++++++++++++++++++++++++++++---------------------
- tests/origin.test.mjs               | 139 +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
- tests/workspace.spec.ts             |  58 +++++++++++++++++++++++++++++++++++++++++++++++++++++++
- 16 files changed, 555 insertions(+), 461 deletions(-)
- create mode 100644 src/components/navigation-frame.tsx
- create mode 100644 src/lib/origin.ts
- create mode 100644 tests/origin.test.mjs
+ AGENTS.md                         |  5 +++--
+ CLAUDE.md                         |  6 +++---
+ Project_Architecture_Document.md  | 17 +++++++++++------
+ README.md                         |  8 ++++++--
+ docs/CODE_REVIEW_REPORT.md        | 85 +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+ remediation-plan-2026-09-11.md    | 60 ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+ src/app/api/chat/route.ts         |  3 ++-
+ src/components/chat-workspace.tsx |  7 +++++--
+ src/lib/title.ts                  | 37 +++++++++++++++++++++++++++++++++++++
+ tests/core.test.mjs               | 65 +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+ tests/recovery.spec.ts            | 17 +++++++++++++++++
+ tests/workspace.spec.ts           | 64 ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+ 12 files changed, 358 insertions(+), 16 deletions(-)
+ create mode 100644 remediation-plan-2026-09-11.md
+ create mode 100644 src/lib/title.ts
