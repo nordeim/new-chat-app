@@ -154,7 +154,7 @@ npm run prune -- --idle-days 30                # retention (ops)
 
 E2E prerequisites: `npm run build && npm start`, disposable `DATABASE_URL` (fixtures are inserted/deleted), **no** `NVIDIA_API_KEY` (missing-key UX is part of the spec), `TEST_BASE_URL` for non-default origins.
 
-Audit history: the severity-ranked review at `docs/CODE_REVIEW_REPORT.md` records what was checked, what was fixed, and open backlog items — read it before planning changes. Live-deployment status (verified 2026-09-11): all live checks pass except the provider round-trip — the deployed `NVIDIA_API_KEY` is rejected by NVIDIA (401/403) while `configured: true`; key rotation is the operator action that restores live chat (code path verified working via its curated-error route).
+Audit history: the severity-ranked review at `docs/CODE_REVIEW_REPORT.md` records what was checked, what was fixed, and open backlog items — read it before planning changes (latest: pass 8, 2026-09-11 — hardened CSP baseline + COOP/CORP landed via TDD; header test in `workspace.spec.ts` pins the policy). Live-deployment status (verified 2026-09-11): all live checks pass except the provider round-trip — the deployed `NVIDIA_API_KEY` is rejected by NVIDIA (401/403) while `configured: true`; key rotation is the operator action that restores live chat (code path verified working via its curated-error route).
 
 ## Code Quality Standards
 

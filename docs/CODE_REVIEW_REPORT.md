@@ -445,3 +445,81 @@ The full findings → ToDo table with per-item root cause, fix, tests, and statu
 2. Rotate the SSH deployment key and the NVIDIA key that remain in git history (carried C1/C2 chain from passes 1–6).
 3. Schedule retention (`npm run prune -- --idle-days 30`) via weekly cron (carried I6).
 4. Nonce-based CSP `script-src` (carried I3, deploy-time hardening).
+
+---
+
+# Pass 8 — 2026-09-11 (fresh clone, live-deployment browser E2E, CSP baseline remediation)
+
+**Date:** 2026-09-11 · **Pass 8** · **Scope:** `src/**`, `tests/**`, root configs, CI, docs, and the live deployment (`https://kimi-chat.jesspete.shop/`) · **Method:** Tiered pipeline: fresh-clone contract re-verification (every AGENTS/CLAUDE/README numeric claim re-checked against source), static gates, manual expert review of the full security-critical surface (`api/chat/route.ts`, `lib/server.ts`, `lib/sse.ts`, `lib/origin.ts`, `lib/validation.ts`, `conversations/[id]/route.ts`), secret scan, dependency audits, live-site browser E2E, an exploratory agent-browser pass over the live UI, and a TDD remediation of the last open code-level hardening item (CSP resource scope, carried I3).
+
+Context: this pass began from a fresh clone of `main` at `c88a19b` after seven prior passes. All code-level findings from passes 1–7 were re-verified as fixed; `sample-build/` was re-diffed and remains a strict subset of `main` (nothing left to adopt). The improvement surface therefore targeted the audit backlog itself.
+
+## Summary
+
+| Severity | Found this pass | Remediated this pass | Open after pass |
+|----------|-----------------|----------------------|-----------------|
+| 🔴 Critical | 0 new (2 carried operator rotations re-verified) | 0 (not code-fixable) | C1/A1 operator rotations (SSH key; dead deployment NVIDIA key) |
+| 🟠 High | 1 (I3 promoted to code work: CSP resource scope) | 1 (hardened CSP baseline + COOP/CORP, TDD) | nonce-based `script-src` remains deploy-time |
+| 🟡 Medium | 0 | — | M3 (ingress rate limiting) + M4 (dev-only esbuild advisories) carried |
+| 🟢 Low | 1 (unscoped alert locator in 2 tests vs documented rule) | 1 (locators aligned to `.error-banner`) | I6 retention cron carried |
+| ⚪ Info | 2 | 1 documented | 1 carried |
+
+The application code remains **shippable**; the CSP baseline lands app-side and reaches the live deployment on the operator's next redeploy.
+
+## Verification ledger (pass 8)
+
+| Check | How | Result |
+|-------|-----|--------|
+| Contract re-verification | Fresh-clone re-check of 12 numeric/behavioral claims (limits, lease 195 s/615 s + 3 s spacing, provider timeouts 175 s/590 s, SSE bounds 1M/8M, cookie `kimi_session` + SHA-256 owner, title dual cap, test counts 41 + 31, model/endpoint) | ✅ 12/12 exact; 4 cosmetic doc drifts fixed in `51e7619` |
+| Static gates | `npm run typecheck` → `npm run lint` → `npm test` → `npm run build` (re-run after each change) | ✅ all green; 41/41 unit |
+| Local E2E | Playwright vs production build on disposable PostgreSQL 17.5 (port 5433, pgcrypto+pg_trgm; migration hash `d5d43cb…` confirmed) | ✅ 32/32 after CSP remediation (31 baseline + 1 new header test); baseline 31/31 captured before the change |
+| Live-site E2E | `LIVE_SITE_URL=https://kimi-chat.jesspete.shop npx playwright test tests/live-site.spec.ts` (fresh chromium install) | ⚠️ 11/12 — provider round-trip fails on the dead deployed key (A1, unchanged); all other checks pass |
+| Live exploratory pass | agent-browser: workspace render, console/page errors, settings dialog, send path, mobile 390 px overflow, drawer + search, conversation delete + cleanup | ✅ no console errors; curated dead-key banner verified; no horizontal overflow; test conversation deleted from the deployment |
+| Secret scan | CI's exact `git grep` credential pattern over tracked files (same exclusions) | ✅ clean |
+| Dependency audit | `npm audit --omit=dev` / `npm audit` | ✅ prod 0 vulnerabilities; dev-only 4 moderate (esbuild chain via drizzle-kit — carried M4, fix is a breaking downgrade) |
+| SQL injection surface | all queries Drizzle-parameterized; `?q=` wildcards escaped; no string concatenation | ✅ clean |
+| Dangerous patterns | grep `eval|new Function|dangerouslySetInnerHTML|innerHTML|document.write|NEXT_PUBLIC_` over `src/` | ✅ none |
+| CSP policy review | Cross-checked every directive against actual client behavior: all client fetches same-origin (grep), images are `data:` URLs + same-origin icon, no workers, no dynamic imports, no inline `style={{}}` in app code; NVIDIA fetch is server-side (CSP does not govern it) | ✅ policy matches reality; verified in-browser by the full 32-test suite under the new policy |
+| Header persistence | `curl -sI` local production build (stale-server pitfall hit and documented: old process must be killed before headers change is observable) | ✅ new CSP + COOP/CORP served |
+
+## 🟠 High (remediated this pass)
+
+### H1 (closes the app-level portion of carried I3) — CSP left resource loading unrestricted ✅ remediated
+- **Location:** `next.config.ts` (headers), `tests/workspace.spec.ts` (new pinned test).
+- **Description:** The CSP covered only `frame-ancestors`, `base-uri`, and `object-src`. Any injected external `<script>`/`<style>` or off-origin `fetch`/form-action was unconstrained by policy — defense-in-depth gap acknowledged in README and carried since pass 2.
+- **Remediation (TDD, red → green):** new header test added first and observed failing; then `default-src 'self'`, `script-src 'self' 'unsafe-inline'` (prerendered App Router HTML ships nonce-less inline bootstrap scripts; dev-only `'unsafe-eval'` for React refresh), `style-src 'self' 'unsafe-inline'`, `img-src 'self' data:` (composer previews + lightbox), `font-src 'self'`, `connect-src 'self'`, `form-action 'self'`, plus `Cross-Origin-Opener-Policy`/`Cross-Origin-Resource-Policy: same-origin`. Full 32-test suite passes under the new policy (streaming, image previews, dialogs, axe WCAG), proving no functional regression. A nonce-based `script-src` (which forces dynamic rendering, breaking static prerender) remains the documented deploy-time step.
+- **Confidence:** Verified (headers observed on the production build; suite green; live suite contract unaffected — it asserts header presence, not the exact CSP value).
+
+## 🟢 Low (remediated this pass)
+
+### L1 — Two tests used unscoped `getByRole("alert")` against the documented rule ✅ remediated
+- **Location:** `tests/workspace.spec.ts` (missing-key test), `tests/stream-ui.spec.ts` (non-JSON 502 test).
+- **Description:** AGENTS.md forbids unscoped `getByRole("alert")` because Next.js injects a global, always-empty route announcer with `role="alert"`. Both tests filtered by exact text so they could not match the empty announcer — safe in practice, but inconsistent with the repo's own contract and fragile if the announcer ever carries text.
+- **Remediation:** both locators now target `.error-banner` with a comment referencing the rule; all suites re-run green (32/32). The explanatory mention inside `live-site.spec.ts` is a comment, not a locator, and stays.
+- **Confidence:** Verified (suite re-run).
+
+## ⚪ Informational
+
+| # | Finding | Disposition |
+|---|---------|-------------|
+| R1 | `readJson`'s 413 copy is image-specific ("Use an image up to 2 MB") even when the smaller PATCH cap (2 KB) trips it | Documented, not changed: the client's mutation path never surfaces server copy verbatim (curated `WorkspaceRequestError` boundary), and the send path — the only place the text is user-visible — is accurate. Changing it would alter a copy contract for no user-visible gain |
+| R2 | The new CSP/COOP/CORP headers reach `https://kimi-chat.jesspete.shop/` only after the operator redeploys | Documented here; live headers re-verified to still serve the previous baseline until then (deploy-time follow-up, no code action) |
+
+## Carried items re-verified this pass (no change)
+
+| ID | Status | Evidence this pass |
+|----|--------|--------------------|
+| C1 (SSH key in git history) | ⚠️ OPEN — operator | Credential supplied again for this pass's push; rotation + history-rewrite decision still pending |
+| C2/A1 (dead deployment NVIDIA key) | ⚠️ OPEN — operator | Re-produced twice (live E2E + exploratory send); curated banner correct |
+| M3 (unauthenticated session-row creation; ingress rate limiting) | ⚠️ OPEN — operator | Code unchanged; documented design boundary |
+| M4 (4 moderate dev-only esbuild advisories) | ⚠️ carried | `npm audit` unchanged; prod clean |
+| I6 (retention cron) | ⚠️ OPEN — operator | CLI verified working locally this pass (`db:migrate` hash + `db:seed` idempotency observed) |
+
+## Remediation backlog (operator / next pass)
+
+1. Redeploy the production build so the hardened CSP/COOP/CORP baseline reaches the live site (R2).
+2. Rotate `NVIDIA_API_KEY` on the deployment (A1 — restores live chat; then re-run the live suite expecting 12/12).
+3. Rotate the SSH deployment key and the NVIDIA key in git history (C1/C2 chain); decide on history rewrite with operator sign-off.
+4. Schedule retention (`npm run prune -- --idle-days 30`) via weekly cron (I6).
+5. Nonce-based CSP `script-src` (I3 residue — deploy-time; requires dynamic rendering tradeoff).
+6. Ingress-level rate limiting for session-row creation (M3).
