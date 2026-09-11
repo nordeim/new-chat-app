@@ -34,7 +34,7 @@ Kimi Workspace solves a common problem: most chat starters stop at a single hard
 | Styling | Tailwind CSS (CSS-first) | 4.3 | Mint design tokens in `globals.css` |
 | Validation | zod | 4.6 | Shared client/server schemas |
 | Data | Drizzle ORM + `pg` | 0.45 / 8.23 | Parameterized queries, JSONB message storage, versioned migrations in `drizzle/` |
-| Database | PostgreSQL | 14+ | Sessions, conversations |
+| Database | PostgreSQL | 17 | Sessions, conversations |
 | AI | NVIDIA NIM (OpenAI-compatible) | — | `moonshotai/kimi-k3` streaming completions |
 | Testing | node:test · Playwright · axe | — | Unit, API-isolation, E2E + WCAG checks |
 
@@ -180,7 +180,7 @@ Limits: 100 conversations per workspace, 60 persisted messages per conversation,
 - Add idempotency tokens if transparent network retry of new conversations is required.
 - Validate actual model availability, streaming behavior, image inference, cancellation, long responses, and multi-turn reasoning with your NVIDIA account.
 - Conduct keyboard/screen-reader and broader browser testing; automated WCAG checks are not a complete accessibility certification.
-- The CSP intentionally covers framing, base URLs, and plugins only; a deployment-specific nonce-based script policy is a separate hardening step.
+- The CSP baseline sets `default-src 'self'` with explicit resource directives (script/style allow same-origin plus the inline bootstrap the App Router prerenders; images allow `data:` for composer previews and the lightbox) plus framing, base-URL, plugin, form-action, and connect-src restrictions. Because prerendered HTML carries no script nonce, `script-src` keeps `'unsafe-inline'`; a deployment-specific nonce-based script policy (which forces dynamic rendering) remains the final hardening step.
 
 ## Testing
 

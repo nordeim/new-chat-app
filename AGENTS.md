@@ -42,7 +42,7 @@ Verification order: `npm run typecheck` → `npm run lint` → `npm test` → `n
 - `src/app/api/conversations/` — list / search / read / rename / delete. The list endpoint accepts `?q=` (server-side ILIKE over title and JSONB message content, owner-filtered, wildcard-escaped). Every query filters by `owner`; delete uses a transaction with `FOR UPDATE` on the session row so it cannot race a running generation.
 - `src/lib/origin.ts` — pure same-origin gate shared by every write endpoint: accepts the origin when it matches `Host` OR the first `x-forwarded-host` value (trusted-ingress convention); rejects `sec-fetch-site: cross-site`, malformed origins, and non-http(s) schemes. Kept free of Next/DB imports so the unit suite can run it anywhere.
 - `src/lib/server.ts` — cookie session (`kimi_session`, 64-hex token; only the SHA-256 digest is stored as `owner`), `assertOrigin` (same-origin writes), bounded `readJson` (3 MB), `errorResponse` (structured logs without PII).
-- `src/lib/retention.ts` — pure prune functions taking `{ db, tables, options }` (no relative runtime imports so the node type-stripping CLI can load them). `scripts/prune-expired.mjs` is the CLI wrapper (`npm run prune`).
+- `src/lib/retention.ts` — pure prune functions taking `(db, tables, options)` positionally (no relative runtime imports so the node type-stripping CLI can load them). `scripts/prune-expired.mjs` is the CLI wrapper (`npm run prune`).
 - `src/db/seed.ts` + `scripts/seed.mjs` — idempotent local-dev seed (no PII, safe to re-run). Injected `{ db, tables }` so the CLI stays alias-free and type-strippable. CLI logs `{inserted, reason, sessions}` and a curated `PostgreSQL not reachable` on ECONNREFUSED.
 - `scripts/migrate.mjs` + `scripts/db-setup.mjs` — wrappers for `db:migrate` / `db:setup`. Preflight `DATABASE_URL` + `select 1` with curated JSON errors; post-migrate they log `{hash, sessions, conversations}` / `{migrationsApplied, inserted}` so the fast no-op spinner (`[✓]`) is self-explanatory.
 - `src/lib/validation.ts` — all zod schemas, shared by server and unit tests.
@@ -70,7 +70,7 @@ Verification order: `npm run typecheck` → `npm run lint` → `npm test` → `n
 - Error messages returned to clients are user-facing copy (specific, actionable). Do not replace them with generic text or leak provider internals.
 - Logs are structured JSON with `operation`, ids, and error types only — never message contents, cookies, or keys.
 - Provider reasoning (`reasoning_content`) is persisted for multi-turn context but stripped from every browser response (`conversations/[id]` GET maps it out; `done` event sends content only).
-- Limits are enforced server-side (60 messages/conversation, 100 conversations/workspace, 16k chars, 2 MB image, 1,200k response chars up to 256k tokens; ~16 MB history); the client mirrors some of them but the server is the authority.
+- Limits are enforced server-side (60 messages/conversation, 100 conversations/workspace, 16k chars, 2 MB image — with a 2.8M-char base64 data-URL pre-cap in `imageSchema` that stays ahead of the 2 MB binary decode check — 1,200k response chars up to 256k tokens; ~16 MB history); the client mirrors some of them but the server is the authority.
 - There is no `tailwind.config.js`; Tailwind v4 is wired through PostCSS and design tokens live in `src/app/globals.css` (`--mint` palette).
 - Do not weaken gates to make them pass (no `@ts-ignore`, no disabling rules, no deleting tests). Fix root causes.
 - Keep all commits on `main`.

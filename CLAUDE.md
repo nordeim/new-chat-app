@@ -55,7 +55,7 @@ Stack: Next.js 16 App Router · React 19 · TypeScript (strict) · Tailwind v4 (
 **Next.js 16 (App Router)**
 - Route handlers under `src/app/api/*` with `export const runtime = "nodejs"` where streaming is used (`maxDuration = 600` on `/api/chat`; provider timeout 175s, 590s for long outputs).
 - `npm run typecheck` runs `next typegen` before `tsc --noEmit`; use it after every route change.
-- Security headers and CSP in `next.config.ts`; keep them intact (`poweredByHeader: false` is deliberate).
+- Security headers and CSP in `next.config.ts`; keep them intact (`poweredByHeader: false` is deliberate). The CSP baseline is `default-src 'self'` + explicit script/style/img/font/connect/form-action directives (`script-src 'self' 'unsafe-inline'` — prerendered App Router HTML ships nonce-less inline bootstrap scripts; dev adds `'unsafe-eval'` for React refresh; `img-src 'self' data:` covers composer previews and the lightbox) + `Cross-Origin-Opener-Policy`/`Cross-Origin-Resource-Policy: same-origin`. The header test in `workspace.spec.ts` pins it — update both together.
 - Next.js injects a global route announcer with `role="alert"` — never assert against `getByRole("alert")` unscoped in tests; target `.error-banner`.
 
 **Tailwind v4 (CSS-first)**
