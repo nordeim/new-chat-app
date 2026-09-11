@@ -640,10 +640,13 @@ export default function ChatWorkspace() {
         setToast("Conversation renamed");
       }
     } catch (err) {
+      // Same client boundary as sendMessage/openConversation: only curated
+      // WorkspaceRequestError copy is shown verbatim; transport failures
+      // (e.g. a dropped connection during the write) get actionable copy.
       setToast(
-        err instanceof Error
+        err instanceof WorkspaceRequestError
           ? err.message
-          : "This action failed. Please try again.",
+          : "This action could not be completed. Check your network and try again.",
       );
     } finally {
       setMutationBusy(false);

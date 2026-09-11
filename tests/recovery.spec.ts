@@ -67,3 +67,20 @@ test("network failure while opening a conversation shows curated copy, not a raw
   await expect(page.locator(".error-banner")).toContainText("Could not open this conversation");
   await expect(page.locator(".error-banner")).not.toContainText(/Failed to fetch|network error/i);
 });
+
+test("failed rename shows curated copy in the toast, not a raw browser error", async ({ page }) => {
+  await page.route("**/api/conversations", (route) => route.fulfill({ json: { conversations: [alpha], configured: false } }));
+  await page.route(`**/api/conversations/${alpha.id}`, (route) => {
+    // The conversation loads, but the rename write fails at the transport layer.
+    if (route.request().method() === "PATCH") return route.abort("connectionreset");
+    return route.fulfill({ json: { conversation: { ...alpha, messages: [{ id: "m1", role: "user", content: "Alpha context" }] } } });
+  });
+  await page.goto("/");
+  await page.getByRole("button", { name: "Alpha planning" }).click();
+  await expect(page.getByText("Alpha context")).toBeVisible();
+  await page.getByRole("button", { name: "Rename conversation" }).click();
+  await page.getByLabel("Conversation title").fill("A better name");
+  await page.getByRole("button", { name: "Save title" }).click();
+  await expect(page.locator(".toast")).toContainText(/could not be completed|try again/i);
+  await expect(page.locator(".toast")).not.toContainText(/Failed to fetch|network error|TypeError/i);
+});
