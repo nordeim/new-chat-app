@@ -146,8 +146,10 @@ test("non-JSON API failure renders friendly copy, not a parse error", async ({
     }),
   );
   await page.goto(base);
+  // Target the app's own banner: Next.js injects a global role="alert" route
+  // announcer, so unscoped alert locators are forbidden (see AGENTS.md).
   const banner = page
-    .getByRole("alert")
+    .locator(".error-banner")
     .filter({ hasText: "Could not load your workspace. Please reload." });
   await expect(banner).toBeVisible();
   const text = await banner.innerText();

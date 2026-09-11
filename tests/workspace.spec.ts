@@ -60,8 +60,10 @@ test("reports missing provider key without discarding the draft", async ({
     page.getByRole("button", { name: "Send message" }),
   ).toBeEnabled();
   await page.getByRole("button", { name: "Send message" }).click();
+  // Target the app's own banner: Next.js injects a global role="alert" route
+  // announcer, so unscoped alert locators are forbidden (see AGENTS.md).
   await expect(
-    page.getByRole("alert").filter({ hasText: "Connect NVIDIA" }),
+    page.locator(".error-banner").filter({ hasText: "Connect NVIDIA" }),
   ).toContainText("Add NVIDIA_API_KEY");
   await expect(page.getByRole("textbox", { name: "Message Kimi" })).toHaveValue(
     "Help me plan a thoughtful project",
