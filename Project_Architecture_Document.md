@@ -13,6 +13,7 @@
 Every change tagged with source: `[RES]` = web research, `[SR]` = self-review, `[CA]` = critical analysis, `[SYN]` = synthesis, `[SAN]` = sanitization, `[AUTH]` = auth alignment, `[VAL]` = live validation.
 
 - `[SYN, VAL]` v1.0 — Initial PAD generated from live codebase at `f888508` (PostgreSQL 17 rebuild validated, `npm run db:migrate → build → TEST_BASE_URL=3004 npx playwright test → 12 skipped, 16 passed`). All sections grounded in file-level evidence, no speculative versions.
+- `[VAL, SR]` v1.1 (2026-09-11) — Improvement + audit pass 7: `src/lib/title.ts` (dual-cap whitespace/surrogate-safe title derivation) added and wired into the chat route; mutation-toast curated-copy boundary completed; 409 delete-while-generating regression test added; unit suite 41, local E2E 31 (verified); live suite 11/12 — the deployed `NVIDIA_API_KEY` is rejected by NVIDIA (operator rotation pending, see `docs/CODE_REVIEW_REPORT.md` pass 7 + `remediation-plan-2026-09-11.md`); Lighthouse re-baselined against the live deployment (97 perf / 100 a11y / 100 best-practices, closing I5).
 
 ---
 
@@ -268,6 +269,7 @@ new-chat-app/
 │       ├── retention.ts          # Pure pruneIdleSessions / pruneStaleConversations taking {db,tables,options} (no @/ aliases, no relative runtime imports) — consumed by scripts/prune-expired.mjs
 │       ├── server.ts             # Cookie session (kimi_session 64-hex, SHA-256 owner), ensureSession/sessionId/requireSession, assertOrigin, readJson (3 MB bounded, 415/413/400), errorResponse (ApiError 4xx vs 500 + requestId log), setSession (HttpOnly Strict, Secure via https|x-forwarded-proto)
 │       ├── sse.ts                # SSEParser — LF/CRLF/CR, split-CRLF skipLF, data: exactly-one-space, multiline join \n, incremental size limits (validated constructor bound: 1M provider default, 8M browser), finish()
+│       ├── title.ts              # Pure deriveTitle(content) — whitespace collapse + dual cap (70 code points surrogate-safe AND ≤100 UTF-16 units so titleSchema accepts derived titles verbatim), trimmed; used by chat route insert path (pass 7)
 │       ├── stream-abort.ts       # Abort taxonomy — streamAbortKind (ResponseAborted/AbortError/TimeoutError + Node body "aborted"/ECONNRESET) → warn-level structured abort logs; error-level shaper for genuine failures
 │       ├── types.ts              # ChatMessage (id, role user|assistant, content, image?, reasoning?), ConversationSummary, ChatSettings, defaultSettings (temp 1, maxTokens 16384, reasoningEffort max)
 │       └── validation.ts         # imageSchema (2_800_000, png|jpeg|webp data-uri), chatInputSchema (conversationId uuid?, content 1-16000 trimmed, image?, settings strict), titleSchema (1-100), idSchema uuid, providerChunkSchema (reasoning_content)
@@ -609,11 +611,12 @@ Additional accents: `.peach #faede4/#bd8d71`, `.lavender #f0edf9/#9b8cb2`, `.yel
 
 | Category | Files | Tests | Framework | Location |
 |----------|-------|-------|-----------|----------|
-| **Unit** | 2 | 22 | `node:test` + `--experimental-strip-types` | `tests/core.test.mjs` (15), `tests/origin.test.mjs` (7) |
-| **E2E — Workspace (DB-backed)** | 1 | 12 | Playwright `request` + Drizzle fixtures | `tests/workspace.spec.ts` |
-| **E2E — Stream UI (hermetic)** | 1 | 4 | Playwright (mocks both APIs) | `tests/stream-ui.spec.ts` |
+| **Unit** | 3 | 41 | `node:test` + `--experimental-strip-types` | `tests/core.test.mjs` (31, incl. 10 deriveTitle), `tests/origin.test.mjs` (7), `tests/stream-limit.test.mjs` (3) |
+| **E2E — Workspace (DB-backed)** | 1 | 13 | Playwright `request` + Drizzle fixtures | `tests/workspace.spec.ts` (incl. 409 delete-while-generating guard) |
+| **E2E — Stream UI (hermetic)** | 1 | 12 | Playwright (mocks both APIs) | `tests/stream-ui.spec.ts` |
+| **E2E — Recovery/Network (hermetic)** | 2 | 6 | Playwright (route fixtures) | `tests/recovery.spec.ts` (5), `tests/network-recovery.spec.ts` (1) |
 | **E2E — Live Site (gated)** | 1 | 12 | Playwright + `LIVE_SITE_URL` + `axe` | `tests/live-site.spec.ts` (skipped unless `LIVE_SITE_URL` set) |
-| **Total local** | 4 | **16 passed** (12 workspace + 4 stream-ui) + 12 skipped live | — | `28 tests using 1 worker` |
+| **Total local** | 7 | **31 passed** + 12 skipped live | — | verified 2026-09-11 (pass 7) |
 
 ### 7.2 Test Patterns
 
@@ -822,15 +825,16 @@ curl http://localhost:3000/api/health  # {"ok":true}
 
 | Priority | Issue | Impact | Status |
 |----------|-------|--------|--------|
+| 🔴 **CRITICAL** | **Live deployment's `NVIDIA_API_KEY` rejected by NVIDIA (pass 7, 2026-09-11)** — `configured: true` but every send returns the curated key-rejection banner; pass 6's round-trip no longer holds | Chat broken live; only the credential is dead (route degraded path verified working) | **OPEN — operator key rotation**; re-run the live suite after (expect 12/12). See `docs/CODE_REVIEW_REPORT.md` pass 7 A1 |
 | 🔴 **CRITICAL** | **SSH private key in git history** (`docs/ssh-key.txt` removed from tracking but still in history — see `CODE_REVIEW_REPORT.md` C1) | Repo read = push access until rotation | **OPEN — operator rotation pending** (credential reused for push automation) |
 | 🔴 **CRITICAL** | **NVIDIA key in git history** (`.env` added `7afe083`, tracked until `272d7ff`; embedded key in `docs/prompt-to-create.md` redacted `dc1c664`; current key `nvapi-vn-hb…` tracked until late remediation; NVIDIA 403 “Authorization failed” proves dead but history retains it) | Exposure cannot be undone without `git filter-repo`; rotation is the correct closure | **OPEN — rotation advised (key reads as dead)**, untracked at `272d7ff`, addendum `6be7596` |
-| 🟠 **HIGH** | **Prod must be redeployed** for `d039d1e` proxy-aware origin gate to take effect (every browser `POST /api/chat` 403 behind Cloudflare until deployed) | Chat broken in production until redeploy | **Code remediated, redeploy required** — then `LIVE_SITE_URL=https://kimi-chat.jesspete.shop npx playwright test tests/live-site.spec.ts` should go 12/12 with real streamed answer |
+| 🟠 **HIGH** | ~~Prod must be redeployed~~ **RESOLVED** — the pass-6/7 live verification (2026-09-11) proves the proxy-aware origin gate is deployed and working behind Cloudflare: same-origin browser writes reach the route (the provider probe receives `meta`), cross-origin writes still 403 exactly, headers/cookie/WCAG all pass | Was: chat broken until redeploy | **Resolved by redeploy** (carried from pass 3; live evidence in `docs/CODE_REVIEW_REPORT.md` pass 7 ledger) — the remaining live failure is the dead provider key (A1 above) |
 | 🟢 **LOW (debt)** | **CI secret scan over-scans reference material** — `git grep … -- . ':!package-lock.json'` hits `skills/`, `sample-build/`, `docs/` example keys (false positives) | Would fail CI if those files are tracked and contain `nvapi-` examples | Advisory: scope to `src tests scripts drizzle` or add `':!skills/**' ':!sample-build/**' ':!docs/**'` |
 | ⚪ **Info** | **100-conversation cap race** — concurrent `count → insert` can transiently exceed by 1 (bounded, self-corrects via retention; advisory-lock fix adds complexity without real risk) | Self-inflicted, bounded | **Accepted** (report I1) |
 | ⚪ **Info** | **429 lease-conflict has no automated test** (reaching lease requires valid provider key) | SQL condition `UPDATE … WHERE busyUntil < now` is concurrency-safe but untested via API | **Backlog** — extract lease seam for injectable coverage if wanted (I2) |
 | ⚪ **Info** | **CSP is minimal** (`frame-ancestors 'none'; base-uri 'self'; object-src 'none'`) — nonce-based `script-src` remains deployment hardening | Framing/base/plugins covered; script nonce is deployment-specific | **Carried** (I3) |
 | ⚪ **Info** | **`workspace-polish.css` adoption revisited (pass 6)** | The pass-1/4 objection targeted the old layer; the current sample-build layer is additive on an identical `globals.css`, fixes the welcome-contrast dip, and was verified class-by-class against this app's markup | **Adopted in pass 6** (see `docs/CODE_REVIEW_REPORT.md`) |
-| ⚪ **Info** | **Lighthouse not re-run this PAD** | Pass 6 changed the render path (editorial mint layer: body font, layout metrics) — the pass-2 baseline (90/100/96) no longer applies | **Deferred** (I5) — re-baseline in the next perf pass |
+| ⚪ **Info** | **Lighthouse re-baselined (pass 7, 2026-09-11)** | Live deployment: **97 performance · 100 accessibility · 100 best-practices** (SEO 63 by-design `noindex`); FCP 1.6 s, LCP 2.3 s, TBT 120 ms, CLS 0 | **Closed** (I5) |
 | ⚪ **Info** | **`npm prune` unscheduled** | Cookie expiry alone does not delete DB data | **Operator — schedule weekly cron** (` --idle-days 30 [--conversation-days 90]`) (I6) |
 | ⚪ **Info** | **Two session artifacts now tracked** (`docs/session_1.md`, `docs/recent_code_changes_to_validate.txt` added at `9db90b2`) | Worklog + pull transcript preserved for audit trail | **Tracked as evidence** — delete if unwanted |
 | ⚪ **Info** | **`db-init-and-e2e-plan.md` added** (post-rebuild evidence) | Plan + evidence for `5433` rebuild (`[✓] migrations`, `{inserted:1→0}`, 662 ms build, 3004 16 passed) | **Tracked** — keep as runbook or archive |
@@ -850,6 +854,7 @@ curl http://localhost:3000/api/health  # {"ok":true}
 | `src/app/globals.css` | ~2000 | CSS-first @theme tokens + component + dialog styles, `@import "tailwindcss"`, responsive 1150/900 + 1500 |
 | `src/lib/server.ts` | ~150 | Cookie session (64-hex→SHA-256), `assertOrigin` (proxy-aware), `readJson` 3 MB, `errorResponse` (curated copy + requestId), `setSession` Strict Secure |
 | `src/lib/origin.ts` | 21 | Pure `isSameOriginRequest` — `Host` OR first `x-forwarded-host`, reject `cross-site`/malformed/non-http(s) |
+| `src/lib/title.ts` | ~30 | Pure `deriveTitle` — whitespace collapse, dual cap (70 code points surrogate-safe AND ≤100 UTF-16 units), trimmed; chat route insert path (pass 7) |
 | `src/lib/validation.ts` | ~50 | All zod schemas — `chatInputSchema` 16k + image + settings strict, `titleSchema` 1–100, `providerChunkSchema` with `reasoning_content` |
 | `src/lib/sse.ts` | ~80 | Incremental `SSEParser` — LF/CRLF/CR, split-CRLF `skipLF`, exactly-one-space `data:`, validated configurable size bound (1M default/provider, 8M browser), shared server+client |
 | `src/lib/types.ts` | ~40 | `ChatMessage`, `ConversationSummary`, `ChatSettings`, `defaultSettings` |

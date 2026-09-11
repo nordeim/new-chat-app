@@ -137,9 +137,9 @@ curl -s http://localhost:3000/api/conversations | grep configured
 
 ### Test Pyramid
 
-- Unit (`tests/core.test.mjs`, `tests/origin.test.mjs`, `tests/stream-limit.test.mjs`; 31 total): zod schemas, SSE parser edge cases (LF/CRLF/CR, split chunks, size limits, the configurable browser/provider bounds), the pure same-origin gate, sidebar history grouping + relative time, markdown node-text extraction, and load-failure copy selection — fast, no services.
+- Unit (`tests/core.test.mjs`, `tests/origin.test.mjs`, `tests/stream-limit.test.mjs`; 41 total): zod schemas, SSE parser edge cases (LF/CRLF/CR, split chunks, size limits, the configurable browser/provider bounds), the pure same-origin gate, sidebar history grouping + relative time, markdown node-text extraction, load-failure copy selection, and title derivation (whitespace collapse + dual cap: 70 code points and 100 UTF-16 units, surrogate-safe) — fast, no services.
 - **API/integration** (`tests/workspace.spec.ts`): session isolation, ownership, origin enforcement, cookie flags, `?q=` search, retention pruning — Playwright request context + Drizzle fixtures.
-- **E2E/UI** (`tests/workspace.spec.ts`, `tests/stream-ui.spec.ts`, `tests/recovery.spec.ts`, `tests/network-recovery.spec.ts`; 29 local total): user journeys, WCAG AA via axe (welcome, dialogs, **and the error state**), streamed-answer rendering through transport fixtures (no live provider needed) — including stop-control abort, malformed-frame copy, code-copy, lightbox, skip link, character counter, DB-outage copy, failed-search fallback + retry, failed-navigation send-destination guard, and network-failure copy.
+- **E2E/UI** (`tests/workspace.spec.ts`, `tests/stream-ui.spec.ts`, `tests/recovery.spec.ts`, `tests/network-recovery.spec.ts`; 31 local total): user journeys, WCAG AA via axe (welcome, dialogs, **and the error state**), streamed-answer rendering through transport fixtures (no live provider needed) — including stop-control abort, malformed-frame copy, code-copy, lightbox, skip link, character counter, DB-outage copy, failed-search fallback + retry, failed-navigation send-destination guard, network-failure copy, mutation-failure curated toast copy, and the 409 delete-while-generating guard.
 - **Live deployment** (`tests/live-site.spec.ts`): env-gated via `LIVE_SITE_URL`; validates a real deployment (headers, Secure cookie, exact-403 cross-origin writes, API contract, session isolation, and one provider round-trip when configured — verified into persisted storage via the read API, with the test deleting only its own conversation; its error race is scoped to `.error-banner` because of the route announcer above).
 
 ### Test Commands
@@ -154,7 +154,7 @@ npm run prune -- --idle-days 30                # retention (ops)
 
 E2E prerequisites: `npm run build && npm start`, disposable `DATABASE_URL` (fixtures are inserted/deleted), **no** `NVIDIA_API_KEY` (missing-key UX is part of the spec), `TEST_BASE_URL` for non-default origins.
 
-Audit history: the severity-ranked review at `docs/CODE_REVIEW_REPORT.md` records what was checked, what was fixed, and open backlog items — read it before planning changes.
+Audit history: the severity-ranked review at `docs/CODE_REVIEW_REPORT.md` records what was checked, what was fixed, and open backlog items — read it before planning changes. Live-deployment status (verified 2026-09-11): all live checks pass except the provider round-trip — the deployed `NVIDIA_API_KEY` is rejected by NVIDIA (401/403) while `configured: true`; key rotation is the operator action that restores live chat (code path verified working via its curated-error route).
 
 ## Code Quality Standards
 

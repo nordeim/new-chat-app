@@ -360,3 +360,88 @@ Probes also showed the pipeline's cancel path (`pipeTo → source.cancel → rou
 3. Schedule retention (`npm run prune -- --idle-days 30`) via weekly cron.
 4. Re-baseline Lighthouse after the polish-layer render changes.
 5. Nonce-based CSP `script-src` (deploy-time hardening).
+
+---
+
+# Pass 7 — 2026-09-11 (improvement pass, fresh-clone live re-verification, Lighthouse re-baseline)
+
+**Scope:** `src/**`, `tests/**`, root docs, and the live deployment (`https://kimi-chat.jesspete.shop/`). **Method:** tiered pipeline per the repo `code-review-and-audit` skill (native CLI fallback mode, consistent with passes 3–6): static gates, secret scan, dependency audit, dangerous-pattern scan, 12-category manual review of every app file, independent expert sub-agent review of the session's diff, full unit + local E2E suites, live-site browser E2E + supplemental API probes, and a Lighthouse re-baseline against the live deployment (closing deferred item I5).
+
+## Summary
+
+| Severity | Found this pass | Remediated this pass | Open after pass |
+|----------|-----------------|----------------------|-----------------|
+| 🔴 Critical | 1 (operator credential — not a code defect) | 0 (not code-fixable) | 2 operator rotations carried (SSH key, NVIDIA key) |
+| 🟠 High | 0 | — | 0 |
+| 🟡 Medium | 0 | — | 0 |
+| 🟢 Low | 2 | 2 (fixed below as R1/R2) | 0 |
+| ⚪ Info | 5 | 5 | 0 (4 documented; Lighthouse re-baselined) |
+
+The application code is **shippable**: no Critical/High/Medium code findings. The single Critical item is the live deployment's dead `NVIDIA_API_KEY` — an operator credential rotation, not a code defect (the route's degraded path was verified working end to end).
+
+## Verification ledger (pass 7)
+
+| Check | How | Result |
+|-------|-----|--------|
+| Static gates | `npm run typecheck` → `npm run lint` → `npm test` → `npm run build` (fresh clone + changes, re-run post-remediation) | ✅ all green; 41/41 unit (31 pre-change baseline + 10 title derivation) |
+| Local E2E | Playwright vs production build (`:3004`) on embedded PostgreSQL 18.4 (pgcrypto+pg_trgm; migration hash `d5d43cb…` confirmed) | ✅ 31/31 (13 workspace incl. new 409 guard test, 12 stream-ui, 5 recovery incl. new curated-toast test, 1 network-recovery) |
+| Live-site E2E | `LIVE_SITE_URL=https://kimi-chat.jesspete.shop npx playwright test tests/live-site.spec.ts` | ⚠️ 11/12 — provider round-trip fails: deployed key rejected by NVIDIA (see A1) |
+| Live supplemental probes | API edge cases: empty prompt 400, 16k+ prompt 400, non-JSON 415, bad image magic bytes 400, lease spacing 429 (verified twice), PATCH rename + DELETE cleanup, `?q=` search isolation | ✅ 9/9 |
+| Secret scan | `git grep` credential patterns over app code (same exclusion contract as CI) | ✅ clean; `.env` untracked (only `.env.example` with placeholder `nvapi-...`) |
+| Dangerous patterns | grep `eval|new Function|dangerouslySetInnerHTML|innerHTML|document.write|NEXT_PUBLIC_|console.log` over `src/` | ✅ none |
+| Dependency audit | `npm audit --omit=dev` / `npm audit` | ✅ prod 0 vulnerabilities; dev-only 4 moderate (esbuild chain via drizzle-kit — carried tradeoff from passes 2–6, fix is a breaking downgrade) |
+| SQL injection surface | all queries Drizzle-parameterized; `sql` templates bind `searchPattern()` output; no string concatenation | ✅ clean |
+| Security headers (live) | `curl -sI` against deployment | ✅ nosniff, DENY, HSTS `63072000; includeSubDomains`, referrer-policy, permissions-policy, CSP `frame-ancestors 'none'; base-uri 'self'; object-src 'none'` |
+| Lighthouse (live) | v13.4.1, headless chromium, 4 categories | ✅ re-baselines deferred I5: **performance 97 · accessibility 100 · best-practices 100** (SEO 63 is by-design `noindex` for a private workspace). FCP 1.6 s · LCP 2.3 s · TBT 120 ms · CLS **0** · SI 1.6 s · TTI 2.9 s |
+| Expert diff review | Independent reviewer sub-agent over the session's uncommitted diff (axes: correctness, test quality, security, consistency, docs accuracy) | ✅ verdict "safe to commit"; 2 Low + 3 Info findings, all adopted below |
+| Contract re-verification | Every AGENTS/CLAUDE/README claim checked against code (commands, counts, limits, routes, patterns) | ✅ aligned; live-verification status refreshed in all three docs |
+
+## 🔴 Critical
+
+### A1 — Live deployment's NVIDIA API key is rejected (chat broken in production) ⚠️ OPEN (operator action)
+- **Location:** server environment of `https://kimi-chat.jesspete.shop/` (not a code defect).
+- **Description:** The deployment reports `configured: true` (a key is present), but NVIDIA answers the chat-completions call with 401/403, so every send surfaces the curated banner "NVIDIA rejected the server API key. Check the key and model access in your NVIDIA account." The key is dead, not missing. This is the live manifestation of the carried C2 rotation item: pass 6 verified a full round-trip on 2026-09-10 with a then-valid key; the credential has since been rejected.
+- **Evidence:** Live E2E failure with banner text captured by the suite; direct `curl` probe reproduces it: `POST /api/chat` returns `meta` event then `error` event with the key-rejection copy; every other live check (headers, Secure cookie, exact-403 cross-origin, API contract, session isolation, WCAG) passes 11/12.
+- **Required action:** Rotate `NVIDIA_API_KEY` on the deployment with a valid key from build.nvidia.com, then re-run `LIVE_SITE_URL=https://kimi-chat.jesspete.shop npx playwright test tests/live-site.spec.ts` — expected 12/12.
+- **Confidence:** Verified (two independent reproductions: browser E2E + direct API probe).
+
+## 🟢 Low
+
+### R1 — Auto-title cap can exceed the rename schema's limit for astral-heavy prompts ✅ remediated this pass
+- **Location:** `src/lib/title.ts` (this session's new helper) interacting with `titleSchema` (`.max(100)` counts UTF-16 units).
+- **Description:** A 70-code-point title composed mostly of astral characters can be up to 140 UTF-16 units, which the rename path (`.max(100)`) would reject verbatim — a confusing rename UX for that conversation. Surfaced by the expert diff review.
+- **Remediation:** `deriveTitle` now trims trailing whitespace and additionally truncates to 100 UTF-16 units when astral characters push past it (both caps enforced); unit tests pin the contract.
+- **Confidence:** Verified (red → green).
+
+### R2 — 409 test could leak a session row on early failure ✅ remediated this pass
+- **Location:** `tests/workspace.spec.ts` (this session's new test).
+- **Description:** If the session cookie were missing, the test threw before registering the owner for `finally` cleanup, leaking a session row into the disposable test DB. Inherited from the older CRUD test's shape.
+- **Remediation:** The owner is registered for cleanup before dereferencing the cookie; an explicit cookie assertion moved after registration.
+- **Confidence:** Verified (code inspection; failure path now unconditionally attempts cleanup).
+
+## ⚪ Informational (all adopted)
+
+| # | Finding | Disposition |
+|---|---------|-------------|
+| R3 | `\s+` collapse also converts Unicode whitespace (NBSP, U+3000) to ASCII spaces in titles — deterministic and desirable for single-line sidebar titles, now documented | Comment extended + unit test with `\u3000` |
+| R4 | The 70-point cap could leave a trailing space; cosmetic only | `trimEnd` added in the same fix as R1 |
+| R5 | Empty / whitespace-only `deriveTitle` case was untested (unreachable via the route's zod `.trim().min(1)`) | Unit test added pinning `""` |
+| R6 | Lighthouse baseline stale after the pass-6 render-path change (deferred I5) | **Re-baselined against the live deployment: 97 / 100 / 100** (SEO 63 by-design noindex) |
+| R7 | 429 lease-conflict has no automated API test (carried I2) | Verified live this pass via direct probe (spacing 429 + documented copy observed on the deployment); repo disposition unchanged (extract-seam coverage remains optional) |
+
+## Improvement changes landed this pass (TDD, red → green)
+
+| Change | Tests |
+|--------|-------|
+| Mutation (rename/delete) failures show curated toast copy; raw transport text (`Failed to fetch`) can no longer reach the UI — closing the pass-6 error boundary's last gap | `recovery.spec.ts` (red: raw "Failed to fetch" observed; green: curated copy) |
+| New-conversation titles collapse whitespace and cut surrogate-safely (`src/lib/title.ts`) | 10 unit tests in `core.test.mjs` (6 initial + 4 with the R1/R3/R4/R5 remediation) |
+| 409 delete-while-generating guard regression test (FOR UPDATE + `busyUntil` lease) | `workspace.spec.ts` (closes the coverage gap for the documented guard) |
+
+## Remediation backlog (operator / next pass)
+
+The full findings → ToDo table with per-item root cause, fix, tests, and status lives in `remediation-plan-2026-09-11.md` (repo root). In brief:
+
+1. Rotate `NVIDIA_API_KEY` on the deployment (A1 — restores live chat; then re-run the live suite expecting 12/12).
+2. Rotate the SSH deployment key and the NVIDIA key that remain in git history (carried C1/C2 chain from passes 1–6).
+3. Schedule retention (`npm run prune -- --idle-days 30`) via weekly cron (carried I6).
+4. Nonce-based CSP `script-src` (carried I3, deploy-time hardening).
