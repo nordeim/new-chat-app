@@ -246,6 +246,70 @@ test("conversation CRUD enforces session isolation and same-origin writes", asyn
   }
 });
 
+// Delete-while-generating guard: the DELETE route takes FOR UPDATE on the
+// session row and refuses with 409 while a response is streaming (busyUntil in
+// the future). Closes the documented coverage gap for this path — no provider
+// key is needed because DELETE never touches the provider.
+test("delete is refused with 409 while a response is generating, then succeeds", async ({
+  browser,
+}) => {
+  const context = await browser.newContext();
+  const ownerIds: string[] = [];
+  try {
+    const response = await context.request.get(`${base}/api/conversations`);
+    expect(response.status()).toBe(200);
+    const cookie = (await context.cookies()).find(
+      (item) => item.name === "kimi_session",
+    );
+    // Register the owner for the finally-cleanup BEFORE dereferencing the
+    // cookie, so an early failure still deletes the server-created session
+    // row (cascade removes the conversation) instead of leaking it.
+    const owner = createHash("sha256")
+      .update(cookie?.value ?? "")
+      .digest("hex");
+    ownerIds.push(owner);
+    expect(cookie?.value).toMatch(/^[a-f0-9]{64}$/);
+    const [item] = await db
+      .insert(conversations)
+      .values({
+        owner,
+        title: "Busy guard test",
+        messages: [
+          { id: crypto.randomUUID(), role: "user", content: "streaming now" },
+        ],
+      })
+      .returning();
+    const url = `${base}/api/conversations/${item.id}`;
+    // Simulate an in-flight generation: the lease is claimed for 60 more seconds.
+    await db
+      .update(sessions)
+      .set({ busyUntil: new Date(Date.now() + 60_000) })
+      .where(eq(sessions.id, owner));
+    const refused = await context.request.delete(url, {
+      headers: { Origin: base },
+    });
+    expect(refused.status()).toBe(409);
+    expect((await refused.json()).error).toBe(
+      "Wait for the current response to finish before deleting a conversation.",
+    );
+    // The conversation survived the refused delete.
+    expect((await context.request.get(url)).status()).toBe(200);
+    // Lease expired: the same delete now succeeds.
+    await db
+      .update(sessions)
+      .set({ busyUntil: new Date(0) })
+      .where(eq(sessions.id, owner));
+    expect(
+      (await context.request.delete(url, { headers: { Origin: base } })).status(),
+    ).toBe(200);
+    expect((await context.request.get(url)).status()).toBe(404);
+  } finally {
+    for (const owner of ownerIds)
+      await db.delete(sessions).where(eq(sessions.id, owner));
+    await context.close();
+  }
+});
+
 test("API rejects malformed input and cross-site requests", async ({
   request,
 }) => {
