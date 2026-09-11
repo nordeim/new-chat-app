@@ -344,6 +344,27 @@ test("API rejects malformed input and cross-site requests", async ({
   expect((await request.get(`${base}/api/health`)).status()).toBe(200);
 });
 
+test("security headers expose a hardened CSP baseline", async ({ request }) => {
+  const response = await request.get(`${base}/`);
+  expect(response.status()).toBe(200);
+  const headers = response.headers();
+  const csp = headers["content-security-policy"] ?? "";
+  // Existing invariants: framing, base URLs, plugins.
+  expect(csp).toContain("frame-ancestors 'none'");
+  expect(csp).toContain("base-uri 'self'");
+  expect(csp).toContain("object-src 'none'");
+  // Hardened baseline: a safe default fallback plus explicit resource directives.
+  expect(csp).toContain("default-src 'self'");
+  expect(csp).toContain("script-src 'self' 'unsafe-inline'");
+  expect(csp).toContain("style-src 'self' 'unsafe-inline'");
+  expect(csp).toContain("img-src 'self' data:");
+  expect(csp).toContain("connect-src 'self'");
+  expect(csp).toContain("form-action 'self'");
+  // Cross-origin isolation hardening.
+  expect(headers["cross-origin-opener-policy"]).toBe("same-origin");
+  expect(headers["cross-origin-resource-policy"]).toBe("same-origin");
+});
+
 test("same-origin writes pass through trusted proxies via x-forwarded-host", async ({
   request,
 }) => {
