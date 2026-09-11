@@ -11,6 +11,7 @@ import {
 } from "@/lib/server";
 import { chatInputSchema, providerChunkSchema } from "@/lib/validation";
 import { SSEParser } from "@/lib/sse";
+import { deriveTitle } from "@/lib/title";
 import {
   streamAbortKind,
   streamAbortLog,
@@ -142,7 +143,7 @@ export async function POST(req: NextRequest) {
         .insert(conversations)
         .values({
           owner,
-          title: input.content.slice(0, 70),
+          title: deriveTitle(input.content),
           messages: [userMessage],
         })
         .returning();

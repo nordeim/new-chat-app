@@ -13,6 +13,7 @@ import {
 } from "../src/lib/history.ts";
 import { getNodeText } from "../src/lib/markdown.ts";
 import { workspaceLoadError } from "../src/lib/workspace-error.ts";
+import { deriveTitle } from "../src/lib/title.ts";
 import {
   streamAbortKind,
   streamAbortLog,
@@ -293,4 +294,68 @@ test("create-path abort log is warn-level with kind and runtime error name", () 
     abortBy: "client-disconnect",
     errorType: "Error",
   });
+});
+
+// deriveTitle: the server derives the stored conversation title from the first
+// prompt. Newlines and tabs must collapse (sidebar items and aria-labels render
+// single lines), and the 70-unit cut must never split a surrogate pair.
+test("deriveTitle collapses whitespace runs into single spaces", () => {
+  assert.equal(
+    deriveTitle("plan:\n  step one\t\tstep two\n\nstep three"),
+    "plan: step one step two step three",
+  );
+});
+
+test("deriveTitle trims leading and trailing whitespace", () => {
+  assert.equal(deriveTitle("   hello there \n "), "hello there");
+});
+
+test("deriveTitle keeps short single-line prompts unchanged", () => {
+  assert.equal(deriveTitle("Explain a tricky piece of code"), "Explain a tricky piece of code");
+});
+
+test("deriveTitle caps at 70 characters", () => {
+  assert.equal(deriveTitle("a".repeat(90)).length, 70);
+  assert.equal(deriveTitle("a".repeat(90)), "a".repeat(70));
+});
+
+test("deriveTitle does not split surrogate pairs at the cap", () => {
+  // 69 'a' + one emoji (2 UTF-16 units): the cap lands inside the pair.
+  const withEmoji = "a".repeat(69) + "😀".repeat(3);
+  const title = deriveTitle(withEmoji);
+  const points = [...title];
+  assert.equal(points.length, 70);
+  // The emoji survived intact at the boundary: complete characters only.
+  assert.equal(points.at(-1), "😀");
+  assert.ok(points.slice(0, 69).every((c) => c === "a"));
+});
+
+test("deriveTitle handles CRLF and mixed separators", () => {
+  assert.equal(deriveTitle("one\r\ntwo\rthree"), "one two three");
+});
+
+// R1/R4/R5: the derived title must satisfy BOTH caps — 70 code points AND
+// 100 UTF-16 units — so the rename path (titleSchema .max(100) counts UTF-16
+// units) always accepts the stored title verbatim; no trailing space; and the
+// empty-input contract is pinned for future callers of the pure helper.
+test("deriveTitle stays within 100 UTF-16 units for astral-heavy prompts", () => {
+  const astral = "😀".repeat(80); // 80 code points = 160 UTF-16 units
+  const title = deriveTitle(astral);
+  assert.ok(title.length <= 100, `expected at most 100 UTF-16 units, got ${title.length}`);
+  assert.ok([...title].every((c) => c === "😀"));
+});
+
+test("deriveTitle never ends with a trailing space after the cap", () => {
+  // 69 'a' + a space as the 70th code point.
+  const title = deriveTitle("a".repeat(69) + " " + "b".repeat(10));
+  assert.ok(!title.endsWith(" "), JSON.stringify(title));
+});
+
+test("deriveTitle collapses Unicode whitespace to single spaces", () => {
+  assert.equal(deriveTitle("one\u00A0\u00A0two\u3000three"), "one two three");
+});
+
+test("deriveTitle returns an empty string for empty or whitespace-only input", () => {
+  assert.equal(deriveTitle(""), "");
+  assert.equal(deriveTitle(" \n\t "), "");
 });
