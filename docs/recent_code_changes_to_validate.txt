@@ -1,25 +1,34 @@
 $ git pull
-remote: Enumerating objects: 50, done.
-remote: Counting objects: 100% (50/50), done.
-remote: Compressing objects: 100% (9/9), done.
-remote: Total 31 (delta 21), reused 31 (delta 21), pack-reused 0 (from 0)
-Unpacking objects: 100% (31/31), 18.08 KiB | 234.00 KiB/s, done.
+remote: Enumerating objects: 78, done.
+remote: Counting objects: 100% (78/78), done.
+remote: Compressing objects: 100% (18/18), done.
+remote: Total 56 (delta 36), reused 56 (delta 36), pack-reused 0 (from 0)
+Unpacking objects: 100% (56/56), 33.36 KiB | 202.00 KiB/s, done.
 From github.com:nordeim/new-chat-app
-   986bc45..c88a19b  main       -> origin/main
-Updating 986bc45..c88a19b
+   b6c7227..f4de984  main       -> origin/main
+Updating b6c7227..f4de984
 Fast-forward
- AGENTS.md                         |  5 +++--
- CLAUDE.md                         |  6 +++---
- Project_Architecture_Document.md  | 17 +++++++++++------
- README.md                         |  8 ++++++--
- docs/CODE_REVIEW_REPORT.md        | 85 +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
- remediation-plan-2026-09-11.md    | 60 ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
- src/app/api/chat/route.ts         |  3 ++-
- src/components/chat-workspace.tsx |  7 +++++--
- src/lib/title.ts                  | 37 +++++++++++++++++++++++++++++++++++++
- tests/core.test.mjs               | 65 +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
- tests/recovery.spec.ts            | 17 +++++++++++++++++
- tests/workspace.spec.ts           | 64 ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
- 12 files changed, 358 insertions(+), 16 deletions(-)
- create mode 100644 remediation-plan-2026-09-11.md
- create mode 100644 src/lib/title.ts
+ AGENTS.md                          |  16 +++++++++-------
+ CLAUDE.md                          |  12 ++++++------
+ Project_Architecture_Document.md   |  68 +++++++++++++++++++++++++++++++++++++++++---------------------------
+ README.md                          |  19 +++++++++++++------
+ docker-compose.yml                 |   4 +++-
+ docs/CODE_REVIEW_REPORT.md         | 104 ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+ new-chat_SKILL.md                  |  36 +++++++++++++++++++-----------------
+ next.config.ts                     |  13 +++++++++++--
+ remediation-plan-2026-09-12.md     |  31 +++++++++++++++++++++++++++++++
+ src/app/api/chat/route.ts          |  18 ++++++++++++++++++
+ src/app/api/conversations/route.ts |  18 +++++++++++++++++-
+ src/lib/keepalive.ts               |  29 +++++++++++++++++++++++++++++
+ src/lib/server.ts                  |   9 +++++++--
+ src/lib/throttle.ts                |  76 ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+ tests/heartbeat.test.mjs           |  76 ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+ tests/stream-ui.spec.ts            |  67 +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+ tests/throttle.test.mjs            | 118 ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+ tests/workspace.spec.ts            |  66 ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++--------
+ 18 files changed, 703 insertions(+), 77 deletions(-)
+ create mode 100644 remediation-plan-2026-09-12.md
+ create mode 100644 src/lib/keepalive.ts
+ create mode 100644 src/lib/throttle.ts
+ create mode 100644 tests/heartbeat.test.mjs
+ create mode 100644 tests/throttle.test.mjs
