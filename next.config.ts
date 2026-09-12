@@ -5,14 +5,23 @@ import type { NextConfig } from "next";
 // HTML; a per-deployment nonce-based script policy (breaking static prerender)
 // remains the documented deploy-time hardening step. Dev adds 'unsafe-eval' for
 // React refresh/HMR only.
+//
+// Cloudflare Web Analytics: zones with it enabled inject a beacon script from
+// static.cloudflareinsights.com that reports to cloudflareinsights.com
+// (sendBeacon is governed by connect-src). The app targets deployment behind
+// Cloudflare (documented ingress convention), so those two origins are part of
+// the baseline; operators not using Web Analytics can disable it in the
+// Cloudflare dashboard and drop these entries.
 const isDev = process.env.NODE_ENV !== "production";
 const contentSecurityPolicy = [
   "default-src 'self'",
-  `script-src 'self' 'unsafe-inline'${isDev ? " 'unsafe-eval'" : ""}`,
+  `script-src 'self' 'unsafe-inline' https://static.cloudflareinsights.com${
+    isDev ? " 'unsafe-eval'" : ""
+  }`,
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data:",
   "font-src 'self'",
-  "connect-src 'self'",
+  "connect-src 'self' https://cloudflareinsights.com",
   "form-action 'self'",
   "frame-ancestors 'none'",
   "base-uri 'self'",

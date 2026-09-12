@@ -362,6 +362,13 @@ test("security headers expose a hardened CSP baseline", async ({ request }) => {
   expect(csp).toContain("img-src 'self' data:");
   expect(csp).toContain("connect-src 'self'");
   expect(csp).toContain("form-action 'self'");
+  // Cloudflare Web Analytics: zones with it enabled inject a beacon script
+  // from static.cloudflareinsights.com that reports to cloudflareinsights.com
+  // (sendBeacon is governed by connect-src). The live deployment runs behind
+  // Cloudflare with the beacon verified present; without these origins the
+  // policy blocks it and every page load logs a CSP console error.
+  expect(csp).toMatch(/script-src[^;]*https:\/\/static\.cloudflareinsights\.com/);
+  expect(csp).toMatch(/connect-src[^;]*https:\/\/cloudflareinsights\.com/);
   // Cross-origin isolation hardening.
   expect(headers["cross-origin-opener-policy"]).toBe("same-origin");
   expect(headers["cross-origin-resource-policy"]).toBe("same-origin");
