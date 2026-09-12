@@ -188,8 +188,14 @@ export async function POST(req: NextRequest) {
             },
           });
           stopKeepAlive = startKeepAlive(() => {
-            if (!aborter.signal.aborted)
+            if (aborter.signal.aborted) return;
+            try {
               controller.enqueue(encoder.encode(": keep-alive\n\n"));
+            } catch {
+              // The stream errored (as opposed to cancel(), which aborts the
+              // guard above): enqueueing into a errored controller throws.
+              // Expected teardown — the finally below still clears the timer.
+            }
           }, 15_000);
           const response = await fetch(
             "https://integrate.api.nvidia.com/v1/chat/completions",

@@ -19,8 +19,10 @@ services:
       POSTGRES_USER: chat_user
       POSTGRES_PASSWORD: chat_secret
       PGDATA: /var/lib/postgresql/data/pgdata
+    # Loopback-only: the repo publishes the credential, so the database must
+    # not be reachable from other interfaces (pass-9 L-1).
     ports:
-      - "5433:5432"
+      - "127.0.0.1:5433:5432"
     volumes:
       - chat_data:/var/lib/postgresql/data
       - ./infrastructure/postgres/init:/docker-entrypoint-initdb.d

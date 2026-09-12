@@ -77,23 +77,31 @@ test("interleaved SSE comment frames do not disturb the stream", async ({
     route.fulfill({
       status: 200,
       contentType: "text/event-stream",
+      // Data frames are composed with the shared sse() helper; only the
+      // comment frames (which the helper cannot express) are interleaved
+      // by hand, covering LF and CRLF separators.
       body:
-        'data: {"type":"meta","conversation":{"id":"' +
-        conversationId +
-        '","title":"Keep-alive check","updatedAt":"' +
-        new Date().toISOString() +
-        '"}}\n\n' +
+        sse([
+          {
+            type: "meta",
+            conversation: {
+              id: conversationId,
+              title: "Keep-alive check",
+              updatedAt: new Date().toISOString(),
+            },
+          },
+        ]) +
         ": keep-alive\n\n" +
-        'data: {"type":"delta","content":"Keep-alive frames are "}' +
-        "\n\n" +
+        sse([{ type: "delta", content: "Keep-alive frames are " }]) +
         ": keep-alive\r\n\r\n" +
-        'data: {"type":"delta","content":"invisible to the message stream."}\n\n' +
+        sse([{ type: "delta", content: "invisible to the message stream." }]) +
         ": keep-alive\n\n" +
-        'data: {"type":"done","message":{"id":"' +
-        assistantId +
-        '","role":"assistant","content":"' +
-        content +
-        '"}}\n\n',
+        sse([
+          {
+            type: "done",
+            message: { id: assistantId, role: "assistant", content },
+          },
+        ]),
     }),
   );
   await page.goto(base);

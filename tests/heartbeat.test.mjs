@@ -11,10 +11,17 @@ const { startKeepAlive } = await import("../src/lib/keepalive.ts");
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+// Poll until the condition holds or the deadline passes — robust against a
+// starved event loop (node:test suites share the loop with module loading).
+async function until(condition, deadlineMs = 2_000) {
+  const deadline = Date.now() + deadlineMs;
+  while (!condition() && Date.now() < deadline) await sleep(10);
+}
+
 test("keep-alive fires repeatedly while running", async () => {
   let beats = 0;
   const stop = startKeepAlive(() => beats++, 5);
-  await sleep(40);
+  await until(() => beats >= 3);
   stop();
   assert.ok(beats >= 3, `expected several beats, got ${beats}`);
 });
@@ -22,7 +29,9 @@ test("keep-alive fires repeatedly while running", async () => {
 test("stop halts the keep-alive permanently", async () => {
   let beats = 0;
   const stop = startKeepAlive(() => beats++, 5);
-  await sleep(20);
+  // Non-vacuous: wait for at least one beat before stopping.
+  await until(() => beats >= 1);
+  assert.ok(beats >= 1, "pre-stop beat never fired");
   stop();
   const after = beats;
   await sleep(30);
