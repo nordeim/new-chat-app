@@ -9,6 +9,7 @@
     "typecheck": "next typegen && tsc --noEmit",
     "test": "node --experimental-strip-types --test tests/*.test.mjs",
     "test:e2e": "playwright test",
+    "test:live": "LIVE_SITE_URL=https://kimi-chat.jesspete.shop playwright test tests/live-site.spec.ts",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "node --experimental-strip-types scripts/migrate.mjs",
     "db:seed": "node --experimental-strip-types scripts/seed.mjs",
