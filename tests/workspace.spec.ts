@@ -316,14 +316,14 @@ test("API rejects malformed input and cross-site requests", async ({
   request,
 }) => {
   await request.get(`${base}/api/conversations`);
-  expect(
-    (
-      await request.post(`${base}/api/chat`, {
-        headers: { Origin: base },
-        data: { content: "" },
-      })
-    ).status(),
-  ).toBe(400);
+  const invalid = await request.post(`${base}/api/chat`, {
+    headers: { Origin: base },
+    data: { content: "" },
+  });
+  expect(invalid.status()).toBe(400);
+  // Error responses carry the same no-store contract as success paths
+  // (pass-9 I-B: intermediaries must never cache curated error copy).
+  expect(invalid.headers()["cache-control"]).toContain("no-store");
   expect(
     (
       await request.post(`${base}/api/chat`, {
@@ -469,6 +469,49 @@ test("conversation search matches titles and message content, isolated by owner"
       await db.delete(sessions).where(eq(sessions.id, owner));
     await first.close();
     await second.close();
+  }
+});
+
+test("rapid scripted search hits a per-session rate limit; plain listing stays free", async ({
+  browser,
+}) => {
+  // Pass-9 finding M-1: the ?q= search expands every owned conversation's
+  // JSONB messages (image data included), so scripted sessions must be
+  // bounded. The limit only applies to ?q= — the plain workspace load
+  // (no term) is a cheap indexed read and must never be throttled.
+  const context = await browser.newContext();
+  await context.request.get(`${base}/api/conversations`);
+  const cookie = (await context.cookies()).find((c) => c.name === "kimi_session");
+  const owner = cookie
+    ? createHash("sha256").update(cookie.value).digest("hex")
+    : null;
+  try {
+    expect(cookie?.value).toBeTruthy();
+    const statuses: number[] = [];
+    for (let i = 0; i < 14; i++) {
+      const response = await context.request.get(
+        `${base}/api/conversations?q=${encodeURIComponent(`term-${i}`)}`,
+      );
+      statuses.push(response.status());
+    }
+    const allowed = statuses.filter((s) => s === 200).length;
+    const throttled = statuses.filter((s) => s === 429).length;
+    expect(allowed).toBeGreaterThanOrEqual(10);
+    expect(throttled).toBeGreaterThanOrEqual(1);
+    expect(allowed + throttled).toBe(statuses.length);
+    const throttledBody = await context.request
+      .get(`${base}/api/conversations?q=${encodeURIComponent("term-again")}`)
+      .then((r) => (r.status() === 429 ? r.json() : undefined));
+    if (throttledBody)
+      expect(String(throttledBody.error)).toMatch(/too frequently|moment/i);
+    // Plain listing is never throttled, even immediately after a 429.
+    for (let i = 0; i < 12; i++) {
+      const response = await context.request.get(`${base}/api/conversations`);
+      expect(response.status()).toBe(200);
+    }
+  } finally {
+    if (owner) await db.delete(sessions).where(eq(sessions.id, owner));
+    await context.close();
   }
 });
 

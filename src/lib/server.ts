@@ -111,7 +111,12 @@ export function errorResponse(error: unknown, operation: string) {
   if (error instanceof ApiError)
     return NextResponse.json(
       { error: error.message },
-      { status: error.status },
+      {
+        status: error.status,
+        // Error bodies must never be cached by intermediaries — same
+        // no-store contract as every success path in the app.
+        headers: { "Cache-Control": "no-store" },
+      },
     );
   const requestId = crypto.randomUUID();
   const errorType = error instanceof Error ? error.name : "UnknownError";
@@ -137,7 +142,7 @@ export function errorResponse(error: unknown, operation: string) {
       error: "The workspace could not complete this action. Please try again.",
       requestId,
     },
-    { status: 500 },
+    { status: 500, headers: { "Cache-Control": "no-store" } },
   );
 }
 
