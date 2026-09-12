@@ -12,6 +12,7 @@ import {
 import { chatInputSchema, providerChunkSchema } from "@/lib/validation";
 import { SSEParser } from "@/lib/sse";
 import { deriveTitle } from "@/lib/title";
+import { startKeepAlive } from "@/lib/keepalive";
 import {
   streamAbortKind,
   streamAbortLog,
@@ -171,6 +172,12 @@ export async function POST(req: NextRequest) {
           content: "",
           reasoning: "",
         };
+        // SSE comment frames while the provider has not answered yet: proxies
+        // (Cloudflare ~100 s, nginx proxy_read_timeout 60 s default) tear down
+        // idle connections before the route's provider timeout can deliver its
+        // curated error, so a slow or hung provider must not leave the wire
+        // silent. Comment frames are ignored by the browser-side SSEParser.
+        let stopKeepAlive: () => void = () => {};
         try {
           send({
             type: "meta",
@@ -180,6 +187,10 @@ export async function POST(req: NextRequest) {
               updatedAt: saved.updatedAt,
             },
           });
+          stopKeepAlive = startKeepAlive(() => {
+            if (!aborter.signal.aborted)
+              controller.enqueue(encoder.encode(": keep-alive\n\n"));
+          }, 15_000);
           const response = await fetch(
             "https://integrate.api.nvidia.com/v1/chat/completions",
             {
@@ -352,6 +363,7 @@ export async function POST(req: NextRequest) {
             // without cancel()); the lease release below still runs.
           }
         } finally {
+          stopKeepAlive();
           try {
             await release();
           } catch {

@@ -56,6 +56,65 @@ test("renders a completed streamed answer using a transport fixture", async ({
   );
 });
 
+test("interleaved SSE comment frames do not disturb the stream", async ({
+  page,
+}) => {
+  // The chat route emits ": keep-alive" comment frames while the provider is
+  // silent (proxy idle-timeout defense). This pins the browser-side contract:
+  // comment frames must be ignored by the shared SSEParser and must not break
+  // frame parsing, the rendered answer, or the busy-state teardown.
+  const conversationId = crypto.randomUUID();
+  const assistantId = crypto.randomUUID();
+  const content = "Keep-alive frames are invisible to the message stream.";
+  await page.route("**/api/conversations", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ conversations: [], configured: true }),
+    }),
+  );
+  await page.route("**/api/chat", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "text/event-stream",
+      body:
+        'data: {"type":"meta","conversation":{"id":"' +
+        conversationId +
+        '","title":"Keep-alive check","updatedAt":"' +
+        new Date().toISOString() +
+        '"}}\n\n' +
+        ": keep-alive\n\n" +
+        'data: {"type":"delta","content":"Keep-alive frames are "}' +
+        "\n\n" +
+        ": keep-alive\r\n\r\n" +
+        'data: {"type":"delta","content":"invisible to the message stream."}\n\n' +
+        ": keep-alive\n\n" +
+        'data: {"type":"done","message":{"id":"' +
+        assistantId +
+        '","role":"assistant","content":"' +
+        content +
+        '"}}\n\n',
+    }),
+  );
+  await page.goto(base);
+  await page
+    .getByRole("textbox", { name: "Message Kimi" })
+    .fill("Check keep-alive tolerance");
+  await page.getByRole("button", { name: "Send message" }).click();
+  await expect(
+    page.getByText("Keep-alive frames are invisible to the message stream.", {
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Copy response" }),
+  ).toBeVisible();
+  await expect(page.getByRole("button", { name: "Stop response" })).toHaveCount(
+    0,
+  );
+  await expect(page.locator(".error-banner")).toHaveCount(0);
+});
+
 test("renders streamed GitHub-Flavored Markdown tables", async ({ page }) => {
   const conversationId = crypto.randomUUID();
   const assistantId = crypto.randomUUID();
