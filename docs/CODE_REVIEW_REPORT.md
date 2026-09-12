@@ -523,3 +523,107 @@ The application code remains **shippable**; the CSP baseline lands app-side and 
 4. Schedule retention (`npm run prune -- --idle-days 30`) via weekly cron (I6).
 5. Nonce-based CSP `script-src` (I3 residue — deploy-time; requires dynamic rendering tradeoff).
 6. Ingress-level rate limiting for session-row creation (M3).
+
+---
+
+# Pass 9 — 2026-09-12 (live E2E gap hunt, session enhancement, tiered audit + remediation)
+
+**Date:** 2026-09-12 · **Pass 9** · **Scope:** fresh clone at `b6c7227` → enhancement commits (`a133236`, `5b6417e`, `374707d`) → remediation commits · **Method:** Tiered pipeline: contract re-verification of every documented claim (independent sub-agent), static gates, independent security audit over the full security-critical surface (OWASP checklist per the repo's `security-and-hardening` skill), independent standards review of the session diff (smell baseline), secret scan, dependency audit, local E2E on a disposable PostgreSQL, live-deployment browser E2E + exploratory pass, then TDD remediation.
+
+Context: the operator **redeployed** after pass 8 (live headers now serve the hardened CSP + COOP/CORP), and live browser E2E surfaced two new verified gaps plus a changed provider failure signature. This pass closed both gaps in code, re-audited the whole surface, and remediated its own findings.
+
+## Summary
+
+| Severity | Found this pass | Remediated this pass | Open after pass |
+|----------|-----------------|----------------------|-----------------|
+| 🔴 Critical | 0 new (2 carried operator rotations re-verified; A2 live-provider status changed) | 0 (not code-fixable) | C1/A2 operator items |
+| 🟠 High | 2 (live E2E gaps: CSP blocks the Cloudflare Web Analytics beacon; no SSE keep-alive → proxy idle cut swallows provider stalls) | 2 (TDD: header test + unit suite red → green) | both closed app-side, live after next redeploy |
+| 🟡 Medium | 1 (M-1: unthrottled `?q=` JSONB search resource amplification, empirically verified) + 2 doc drifts (D1/D2) | 3 (sliding-window search rate limit; PAD/SKILL sync) | B1 indexed search = backlog (schema change) |
+| 🟢 Low | 4 (L-1 compose binding; L-2 beat guard; S4 timing-test flake risk; D3 stale README status) | 4 | none |
+| ⚪ Info | 3 (I-A CSP third-party origin — intended; I-B error no-store; S5 hand-rolled test body) | 3 (no-store landed + asserted; test body composed via `sse()`; I-A documented) | I-A is the accepted policy |
+
+The application code remains **shippable**; live effect of this pass's fixes lands on the operator's next redeploy.
+
+## Verification ledger (pass 9)
+
+| Check | How | Result |
+|-------|-----|--------|
+| Contract re-verification | Independent sub-agent re-checked every AGENTS/CLAUDE/README/PAD/SKILL claim (commands, limits, lease/timeout values, SSE bounds, title caps, counts, tokens, API table, troubleshooting rows) | ✅ accurate after the session's doc commits; 3 drifts found and fixed this pass (D1 PAD, D2 SKILL, D3 README status) |
+| Static gates | `npm run typecheck` → `npm run lint` → `npm test` → `npm run build` after every change | ✅ all green; final **55/55** unit (47 + 8 throttle), **34/34** local E2E (33 + 1 rate-limit test) |
+| Local E2E | Playwright vs production build on disposable embedded PostgreSQL 18 (port 5433, pgcrypto+pg_trgm, migration hash `d5d43cb…`) | ✅ 34/34 |
+| Live-site E2E | `LIVE_SITE_URL=https://kimi-chat.jesspete.shop npx playwright test tests/live-site.spec.ts` | ⚠️ 10/12 — page-load console error (beacon blocked by the just-deployed CSP, fixed app-side this pass) + provider round-trip (see A2) |
+| Live direct probes | `curl -sI` headers; `curl -sN` chat send with timing; conversation read via API | ✅ headers/CSP/COOP/CORP live; ❌ provider stream stalls >200 s after `meta` with no events (user turn persisted, no answer) |
+| Exploratory browser pass | Playwright script over the live UI (stalled conversation render, settings, composer, image preview, mobile drawer, empty search, console capture) | ✅ all flows work; the ONLY console error is the blocked beacon |
+| Independent security audit | Sub-agent over the full security-critical surface (OWASP checklist: injection, authn/authz, XSS, secrets, validation, abuse, DoS, info disclosure, CSRF/origin-gate trust model, CSP) | ✅ clean except M-1/L-1/L-2/I-A/I-B; origin-gate trust model and keep-alive wiring assessed sound |
+| Independent standards review | Sub-agent over `b6c7227..374707d` vs AGENTS/CLAUDE standards + smell baseline | ✅ no Critical/High; S4/S5 Low findings, both remediated |
+| Secret scan | CI's `git grep` credential pattern over tracked files (same exclusions) | ✅ clean |
+| Dependency audit | `npm audit --omit=dev` / `npm audit` | ✅ prod 0 vulnerabilities; dev-only 4 moderate (esbuild chain via drizzle-kit — carried M4) |
+
+## 🟠 High (live E2E gaps, remediated this pass)
+
+### H1 — The deployed CSP blocks the Cloudflare Web Analytics beacon ✅ remediated
+- **Location:** `next.config.ts` (CSP), live deployment zone settings.
+- **Description:** the pass-8 hardened CSP went live with the operator's redeploy; zones with Web Analytics enabled inject `static.cloudflareinsights.com/beacon.min.js` zone-wide, and `script-src 'self' 'unsafe-inline'` blocked it — a console error on every page load and a failing live "no console errors" check.
+- **Remediation (TDD):** header test extended first (red), then `script-src … https://static.cloudflareinsights.com` + `connect-src … https://cloudflareinsights.com` (sendBeacon reporting endpoint) added (green). Live after the next redeploy.
+- **Confidence:** Verified (live console capture + header probe + suite).
+
+### H2 — No SSE keep-alive: a silent provider exceeds proxy idle timeouts and the route's curated error never arrives ✅ remediated
+- **Location:** `src/app/api/chat/route.ts` (stream construction).
+- **Description:** between `meta` and the provider's first byte the wire carries nothing. Cloudflare cuts idle connections at ~100 s and nginx's `proxy_read_timeout` defaults to 60 s — both shorter than the route's 175 s/590 s provider timeouts, so every slow or hung provider becomes an opaque network failure ("The connection was interrupted") after ~100 s of silence. Verified live: direct probe showed `meta` then zero events for >200 s while the user turn was persisted and the browser saw a raw transport failure.
+- **Remediation (TDD):** pure `src/lib/keepalive.ts` (`startKeepAlive`, RangeError 1–600,000 ms, idempotent stop) + route wiring emitting `: keep-alive` SSE comment frames every 15 s, cleared unconditionally in the stream's `finally`; beat enqueue guarded against aborted AND errored controllers. Comment frames are ignored by the shared SSEParser (unit + E2E pins; the parser's non-`data:` rule is now documented in AGENTS.md).
+- **Confidence:** Verified (unit + local E2E + live failure reproduction that motivated it).
+
+## 🟡 Medium
+
+### M-1 — Unthrottled `?q=` search enables per-session resource amplification ✅ remediated
+- **Location:** `src/app/api/conversations/route.ts` (search condition), verified empirically by the audit sub-agent on a disposable PostgreSQL 18.
+- **Description:** the search expands every owned conversation's JSONB messages array — inline image data included. At the documented caps (100 conversations × 16 MB), one `?q=` request costs **2.3–2.8 s of DB CPU and ~1.6 GB of TOAST reads**; 8 concurrent searches serialize a core for 18.7 s. Scripted amplification requires a one-time ~30–60 min seeding campaign (each image-bearing user turn persists before the provider call).
+- **Remediation (TDD):** pure `src/lib/throttle.ts` sliding-window limiter (validated options, injectable clock, entry-capped map) wired as **10 searches / 10 s / session on the `?q=` path only** — plain listing stays unlimited (cheap indexed read). 429 copy is curated; the client already degrades failed searches to local-title filtering behind a retryable notice (regression-tested in `recovery.spec.ts`). Process-local by design (single-instance deployment); the DB lease remains the correctness authority. 8 unit tests + 1 API E2E test.
+- **Residual:** B1 backlog — generated `search_text` column + `pg_trgm` GIN index (extension installed) would remove the per-query cost instead of bounding it; deferred as a schema-change decision.
+- **Confidence:** Verified (measurement + red → green).
+
+### D1/D2/D3 — contract docs drifted from the session's code changes ✅ remediated
+- PAD (`Project_Architecture_Document.md`) and `new-chat_SKILL.md` still described the pre-session CSP, 41/32 test counts, and no `keepalive.ts`; README's "Latest verification" paragraph still said pass-8 numbers. All synced in the final doc pass of this session (counts now 55 unit / 34 local E2E, both files carry the keep-alive + throttle + CSP-origins contracts).
+
+## 🟢 Low (all remediated this pass)
+
+| # | Finding | Remediation |
+|---|---------|-------------|
+| L-1 | `docker-compose.yml` published PostgreSQL on all interfaces with repo-published credentials | Bound to `127.0.0.1:5433:5432` |
+| L-2 | keep-alive beat could throw into the timer if the stream **errors** (vs. cancels) mid-beat | Beat body wrapped in try/catch mirroring the `send` guard |
+| S4 | heartbeat "fires repeatedly" test could flake under event-loop starvation | Poll-until-deadline helper; stop test made non-vacuous |
+| D3 | README:202 "Latest verification" stale (pass-8 numbers under a "Latest" heading) | Refreshed to pass 9 |
+
+## ⚪ Informational
+
+| # | Finding | Disposition |
+|---|---------|-------------|
+| I-A | CSP now trusts `static.cloudflareinsights.com` (script) + `cloudflareinsights.com` (connect) | Intended remediation of H1; the origin serves only the Web Analytics beacon; operators not using it can disable Web Analytics in the Cloudflare dashboard and drop the entries (documented in next.config.ts). The dominant script-src weakness remains `'unsafe-inline'` (carried I3 nonce item) |
+| I-B | `errorResponse` omitted `Cache-Control: no-store` on error JSON | Fixed: both branches now set it; asserted in the malformed-input API test |
+| S5 | The new comment-frame E2E test hand-rolled its JSON data frames | Composed via the shared `sse()` helper; only the comment frames remain hand-written |
+
+## A2 — Live provider path changed from fast-reject to a >200 s hang ⚠️ OPEN (operator)
+- **Location:** server environment of `https://kimi-chat.jesspete.shop/` (not distinguishable from outside whether the cause is the credential, NVIDIA NIM service state for `moonshotai/kimi-k3`, or server egress).
+- **Description:** pass 8's signature was a fast 401/403 with the curated key-rejection banner. Now `meta` arrives, the provider fetch stalls with no events for >200 s, and the browser (behind Cloudflare's ~100 s cut) surfaces raw transport-failure copy. The keep-alive fix (H2) preserves the connection so the route's own timeout error can now reach the browser, but the round-trip itself needs operator action: verify/rotate `NVIDIA_API_KEY`, check NVIDIA NIM status, verify server egress — then re-run the live suite.
+- **Confidence:** Verified (two direct probes + live E2E; cause attribution: Unverifiable from outside).
+
+## Carried items re-verified this pass (no change)
+
+| ID | Status | Evidence this pass |
+|----|--------|--------------------|
+| C1 (SSH key in git history) | ⚠️ OPEN — operator | Credential supplied for this pass's push; rotation + history-rewrite decision still pending |
+| C2 (NVIDIA keys in git history) | ⚠️ OPEN — operator | Keys still retrievable from history; rotation remains the closure |
+| M3 (unauthenticated session-row creation; ingress rate limiting) | ⚠️ OPEN — operator | Code unchanged; documented design boundary (M-1's limiter narrows the amplification surface behind it) |
+| M4 (4 moderate dev-only esbuild advisories) | ⚠️ carried | `npm audit` unchanged; prod clean |
+| I6 (retention cron) | ⚠️ OPEN — operator | CLI verified working in this session's environment |
+| I3 residue (nonce-based CSP script-src) | ⚠️ deploy-time | Unchanged; requires dynamic-rendering tradeoff |
+
+## Remediation backlog (operator / next pass)
+
+1. Redeploy the production build so this pass's CSP analytics allowance, keep-alive frames, search rate limit, and error no-store reach the live site; then re-run the live suite (page-load check should go green; provider round-trip depends on A2).
+2. A2: verify/rotate `NVIDIA_API_KEY`, check NVIDIA NIM service status for `moonshotai/kimi-k3`, verify server egress; re-run `LIVE_SITE_URL=… npx playwright test tests/live-site.spec.ts` expecting 12/12.
+3. Rotate the SSH deployment key and the NVIDIA key in git history (C1/C2 chain); decide on history rewrite with operator sign-off.
+4. Schedule retention (`npm run prune -- --idle-days 30`) via weekly cron (I6).
+5. B1: indexed server-side search (generated `search_text` + `pg_trgm` GIN) as the complete M-1 closure — schema-migration decision.
+6. Nonce-based CSP `script-src` (I3 residue — deploy-time; requires dynamic rendering tradeoff).
+7. Ingress-level rate limiting for session-row creation (M3).
