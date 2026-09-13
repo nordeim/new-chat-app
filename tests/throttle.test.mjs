@@ -1,12 +1,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-// Per-session sliding-window rate limiter for the ?q= search path. The search
-// expands every conversation's JSONB messages array (including inline image
-// data), so a scripted session can otherwise amplify a ~30-minute seeding
-// campaign into sustained database CPU pressure (pass-9 finding M-1). Pure and
-// dependency-free so node:test can exercise it like origin.ts / keepalive.ts;
-// time is injectable for deterministic tests.
+// Sliding-window rate limiter, shared by two call sites: the per-session
+// `?q=` search limiter (defense-in-depth now that search runs on the indexed
+// search_text column — short terms still degrade to sequential scans) and the
+// per-network session-mint limiter in server.ts (keys derived through
+// client-key.ts). Pure and dependency-free so node:test can exercise it like
+// origin.ts / keepalive.ts; time is injectable for deterministic tests.
 const { createRateLimiter } = await import("../src/lib/throttle.ts");
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));

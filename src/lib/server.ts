@@ -4,10 +4,25 @@ import { NextRequest, NextResponse } from "next/server";
 import { eq } from "drizzle-orm";
 import { db } from "@/db";
 import { sessions } from "@/db/schema";
+import { clientNetworkKey } from "@/lib/client-key";
 import { isSameOriginRequest } from "@/lib/origin";
 import { abortErrorLog, streamAbortKind } from "@/lib/stream-abort";
+import { createRateLimiter } from "@/lib/throttle";
 
 const cookieName = "kimi_session";
+
+// Backlog M3 (app-level portion): minting a session row needs no
+// authentication, so cookieless floods can create unbounded rows. Bounding
+// NEW-session creation per network blunts that surface; requests that
+// already carry a valid cookie never touch this limiter. The key derivation
+// (src/lib/client-key.ts) prefers cf-connecting-ip, then the rightmost
+// x-forwarded-for value — both positions the trusted ingress controls — and
+// rejects non-IP shapes, so spoofed headers cannot mint fresh buckets or
+// retain oversized key strings. Direct connections share a single "direct"
+// bucket. Ingress-level limits remain the documented public-service defense
+// — this is process-local defense-in-depth.
+const sessionMintLimiter = createRateLimiter({ windowMs: 10_000, max: 60 });
+
 export class ApiError extends Error {
   constructor(
     public status: number,
@@ -31,8 +46,21 @@ export async function ensureSession(req: NextRequest) {
   if (req.headers.get("sec-fetch-site") === "cross-site")
     throw new ApiError(403, "Cross-site requests are not permitted.");
   let token = (await cookies()).get(cookieName)?.value;
-  if (!token || !/^[a-f0-9]{64}$/.test(token))
+  if (!token || !/^[a-f0-9]{64}$/.test(token)) {
+    if (
+      !sessionMintLimiter.allow(
+        clientNetworkKey(
+          req.headers.get("cf-connecting-ip"),
+          req.headers.get("x-forwarded-for"),
+        ),
+      )
+    )
+      throw new ApiError(
+        429,
+        "Too many new sessions from this network. Wait a moment and reload the page.",
+      );
     token = randomBytes(32).toString("hex");
+  }
   const owner = createHash("sha256").update(token).digest("hex");
   await db.insert(sessions).values({ id: owner }).onConflictDoNothing();
   return { owner, token };

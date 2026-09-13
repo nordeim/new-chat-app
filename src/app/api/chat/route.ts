@@ -43,12 +43,6 @@ export async function POST(req: NextRequest) {
         parsed.error.issues[0]?.message ?? "Invalid message.",
       );
     const input = parsed.data;
-    const key = process.env.NVIDIA_API_KEY;
-    if (!key)
-      throw new ApiError(
-        503,
-        "Connect NVIDIA to start chatting. Add NVIDIA_API_KEY to your server environment, then restart the app. Your message is still here.",
-      );
     if (input.image) {
       const bytes = Buffer.from(input.image.split(",")[1], "base64");
       const mime = input.image.slice(5, input.image.indexOf(";"));
@@ -88,6 +82,16 @@ export async function POST(req: NextRequest) {
         "A response is already running, or messages were sent too quickly. Wait a moment and try again.",
       );
     lease = proposedLease;
+    // The lease is the uniform admission gate: every validated send passes
+    // through it, so conflict behavior (429) is reachable and testable with
+    // or without a provider key. Config errors surface after the claim and
+    // release the lease on their way out (the catch below calls release()).
+    const key = process.env.NVIDIA_API_KEY;
+    if (!key)
+      throw new ApiError(
+        503,
+        "Connect NVIDIA to start chatting. Add NVIDIA_API_KEY to your server environment, then restart the app. Your message is still here.",
+      );
     const userMessage: ChatMessage = {
       id: crypto.randomUUID(),
       role: "user",

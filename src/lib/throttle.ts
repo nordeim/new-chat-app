@@ -1,19 +1,23 @@
-// Per-key sliding-window rate limiter used to bound the cost of the server
-// side search path (`GET /api/conversations?q=`).
+// Per-key sliding-window rate limiter. Two call sites (pass 10):
 //
-// The search expands every owned conversation's JSONB messages array —
-// including inline image data — so a scripted session can turn a one-time
-// seeding campaign into sustained database CPU pressure (pass-9 finding M-1).
-// The limiter bounds how often one session may run that expansion. Plain
-// listing (no `?q=`) stays unlimited: it is a cheap indexed read used on every
-// workspace load.
+// 1. `GET /api/conversations?q=` — bounds how often one session may search.
+//     Search is now served by the generated `search_text` column (backlog B1),
+//     but terms under three characters cannot use the trigram index, so the
+//     limiter stays as defense-in-depth against sequential-scan floods.
+//     Plain listing (no `?q=`) is a cheap indexed read and stays unlimited.
+// 2. Session minting in `src/lib/server.ts` — bounds how many NEW session
+//     rows a network can create per window (backlog M3's app-level portion);
+//     requests that already carry a valid cookie never touch it.
 //
-// State is process-local (module-level in the route): effective for the
+// State is process-local (module-level in each caller): effective for the
 // documented single-instance deployment, not a cross-instance guarantee — the
 // database lease remains the authority for correctness-critical serialization.
 // Entry growth is bounded two ways: expired timestamps are pruned on every
 // check, and the key map is capped (oldest-expiry keys dropped first) so
-// unique-key floods cannot grow memory unboundedly.
+// unique-key floods cannot grow the entry count unboundedly. Keys are
+// caller-supplied — the session-mint caller derives them through
+// `src/lib/client-key.ts`, which validates IP shapes so key strings stay
+// short and stable.
 //
 // Pure and dependency-free with an injectable clock, following the origin.ts /
 // keepalive.ts convention so the node:test suite can exercise it deterministically.
