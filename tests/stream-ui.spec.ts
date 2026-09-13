@@ -171,6 +171,66 @@ test("renders streamed GitHub-Flavored Markdown tables", async ({ page }) => {
   await expect(table.getByRole("cell", { name: "Ready" })).toBeVisible();
 });
 
+test("export downloads the conversation as a markdown file", async ({
+  page,
+}) => {
+  // Coverage-backlog residue: the export affordance (chat-tools "Export")
+  // had no automated test. The download must carry the conversation id as
+  // its filename and the full turn-taking transcript as markdown.
+  const conversationId = crypto.randomUUID();
+  const assistantId = crypto.randomUUID();
+  const userText = "Summarize the quarterly launch";
+  const answer = "The launch lands in three phases.";
+  await page.route("**/api/conversations", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ conversations: [], configured: true }),
+    }),
+  );
+  await page.route("**/api/chat", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "text/event-stream",
+      body: sse([
+        {
+          type: "meta",
+          conversation: {
+            id: conversationId,
+            title: "Quarterly launch",
+            updatedAt: new Date().toISOString(),
+          },
+        },
+        { type: "delta", content: answer },
+        {
+          type: "done",
+          message: { id: assistantId, role: "assistant", content: answer },
+        },
+      ]),
+    }),
+  );
+  await page.goto(base);
+  await page.getByRole("textbox", { name: "Message Kimi" }).fill(userText);
+  await page.getByRole("button", { name: "Send message" }).click();
+  await expect(
+    page.locator(".message.assistant").filter({ hasText: answer }),
+  ).toBeVisible();
+  const [download] = await Promise.all([
+    page.waitForEvent("download"),
+    page.getByRole("button", { name: "Export" }).click(),
+  ]);
+  expect(download.suggestedFilename()).toBe(`kimi-${conversationId}.md`);
+  const filePath = await download.path();
+  const exported = (await import("node:fs"))
+    .readFileSync(filePath, "utf8")
+    .toString();
+  expect(exported).toContain("# Quarterly launch");
+  expect(exported).toContain("## You");
+  expect(exported).toContain(userText);
+  expect(exported).toContain("## Kimi");
+  expect(exported).toContain(answer);
+});
+
 test("error state shows the server message and passes WCAG AA contrast", async ({
   page,
 }) => {

@@ -2,7 +2,7 @@ import "dotenv/config";
 import { test, expect } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
 import { createHash } from "node:crypto";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { db, pool } from "../src/db";
 import { conversations, sessions } from "../src/db/schema";
 import { pruneIdleSessions, pruneStaleConversations } from "../src/lib/retention";
@@ -312,6 +312,145 @@ test("delete is refused with 409 while a response is generating, then succeeds",
   }
 });
 
+test("chat lease conflicts surface 429 with curated copy, then recover", async ({
+  browser,
+}) => {
+  // Backlog I2: the atomic one-generation lease is the write serializer for
+  // /api/chat, but no test reached the 429 branch (it previously needed a
+  // live provider key). Fixtures claim the lease directly in the database,
+  // so both the busy-window and the 3 s send-spacing refusals are covered
+  // without a provider. Recovery is proven by the next non-conflicting send
+  // reaching the (curated) missing-key 503 instead of 429.
+  const context = await browser.newContext();
+  const ownerIds: string[] = [];
+  try {
+    await context.request.get(`${base}/api/conversations`);
+    const cookie = (await context.cookies()).find(
+      (item) => item.name === "kimi_session",
+    );
+    const owner = createHash("sha256")
+      .update(cookie?.value ?? "")
+      .digest("hex");
+    ownerIds.push(owner);
+    expect(cookie?.value).toMatch(/^[a-f0-9]{64}$/);
+    const send = () =>
+      context.request.post(`${base}/api/chat`, {
+        headers: { Origin: base },
+        data: {
+          content: "lease conflict probe",
+          settings: {
+            temperature: 1,
+            maxTokens: 1024,
+            reasoningEffort: "low",
+          },
+        },
+      });
+    // Busy window: another generation holds the lease for 60 more seconds.
+    await db
+      .update(sessions)
+      .set({ busyUntil: new Date(Date.now() + 60_000) })
+      .where(eq(sessions.id, owner));
+    const busy = await send();
+    expect(busy.status()).toBe(429);
+    expect((await busy.json()).error).toBe(
+      "A response is already running, or messages were sent too quickly. Wait a moment and try again.",
+    );
+    // Send spacing: lease free, but the previous request was under 3 s ago.
+    await db
+      .update(sessions)
+      .set({ busyUntil: new Date(0), lastRequest: new Date() })
+      .where(eq(sessions.id, owner));
+    const spaced = await send();
+    expect(spaced.status()).toBe(429);
+    expect((await spaced.json()).error).toBe(
+      "A response is already running, or messages were sent too quickly. Wait a moment and try again.",
+    );
+    // Recovered: with the lease free and spacing satisfied, the request
+    // proceeds past the lease to the next guard — the curated missing-key
+    // 503 (NVIDIA_API_KEY is deliberately unset for the E2E suite).
+    await db
+      .update(sessions)
+      .set({ busyUntil: new Date(0), lastRequest: new Date(0) })
+      .where(eq(sessions.id, owner));
+    const recovered = await send();
+    expect(recovered.status()).toBe(503);
+    expect((await recovered.json()).error).toContain("Connect NVIDIA");
+  } finally {
+    for (const owner of ownerIds)
+      await db.delete(sessions).where(eq(sessions.id, owner));
+    await context.close();
+  }
+});
+
+test("cookieless session creation is throttled per network; cookie traffic is not", async ({
+  browser,
+}) => {
+  // Backlog M3 (app-level portion): every cookieless GET /api/conversations
+  // mints a session row, so a scripted client can create unbounded rows with
+  // no auth. The app-level guard bounds NEW-session minting per network
+  // (trusted-ingress x-forwarded-for convention) while requests that already
+  // carry a valid session cookie stay unlimited. Ingress-level limits remain
+  // the documented public-service defense; this is defense-in-depth.
+  const context = await browser.newContext();
+  const mintedTokens: string[] = [];
+  let sawThrottle = false;
+  try {
+    // Establish one session, then prove cookie traffic is never throttled.
+    await context.request.get(`${base}/api/conversations`);
+    for (let i = 0; i < 5; i++) {
+      const response = await context.request.get(`${base}/api/conversations`);
+      expect(response.status()).toBe(200);
+    }
+    // Cookieless flood: fire all requests concurrently so the whole burst
+    // lands inside the 10 s window on any runner (serial requests could
+    // stretch past the window on slow CI and erode the throttled count).
+    // Each response's Set-Cookie header carries the minted session token —
+    // captured for precise owner-addressed cleanup in the finally below.
+    await context.clearCookies();
+    const responses = await Promise.all(
+      Array.from({ length: 80 }, () =>
+        context.request.get(`${base}/api/conversations`),
+      ),
+    );
+    const statuses = responses.map((response) => response.status());
+    for (const response of responses)
+      mintedTokens.push(
+        ...[...response.headers()["set-cookie"]?.matchAll(/kimi_session=([a-f0-9]{64})/g) ?? []].map(
+          (match) => match[1],
+        ),
+      );
+    const allowed = statuses.filter((s) => s === 200).length;
+    const throttled = statuses.filter((s) => s === 429).length;
+    sawThrottle = throttled > 0;
+    expect(allowed + throttled).toBe(statuses.length);
+    expect(allowed).toBeGreaterThanOrEqual(40);
+    expect(throttled).toBeGreaterThanOrEqual(5);
+    const throttledBody = await context.request
+      .get(`${base}/api/conversations`)
+      .then((r) => (r.status() === 429 ? r.json() : undefined));
+    if (throttledBody)
+      expect(String(throttledBody.error)).toMatch(
+        /new sessions|wait a moment|reload/i,
+      );
+  } finally {
+    // Precise owner-addressed cleanup: the flood mints sessions whose tokens
+    // were captured from each response's Set-Cookie header, so they are
+    // deleted by owner exactly like every other test's fixtures — no global
+    // empty-session sweep that couples this test to unrelated rows.
+    for (const token of mintedTokens) {
+      await db
+        .delete(sessions)
+        .where(
+          eq(sessions.id, createHash("sha256").update(token).digest("hex")),
+        );
+    }
+    // The flood fills the shared per-network window; drain it so later
+    // tests (which mint their own sessions) are not refused by this test.
+    if (sawThrottle) await new Promise((r) => setTimeout(r, 10_500));
+    await context.close();
+  }
+});
+
 test("API rejects malformed input and cross-site requests", async ({
   request,
 }) => {
@@ -509,6 +648,80 @@ test("rapid scripted search hits a per-session rate limit; plain listing stays f
       const response = await context.request.get(`${base}/api/conversations`);
       expect(response.status()).toBe(200);
     }
+  } finally {
+    if (owner) await db.delete(sessions).where(eq(sessions.id, owner));
+    await context.close();
+  }
+});
+
+test("server-side search reads the indexed generated column (B1)", async ({
+  browser,
+}) => {
+  // Backlog B1: the ?q= search must be served from a generated search_text
+  // column with a pg_trgm GIN index instead of expanding every conversation's
+  // JSONB messages (the pass-9 M-1 amplification the rate limit only
+  // mitigates). This pins the infrastructure contract itself: the column is
+  // maintained by the database (title + message contents, images excluded),
+  // the index serves the ILIKE predicate, and the API behavior is unchanged.
+  const context = await browser.newContext();
+  await context.request.get(`${base}/api/conversations`);
+  const cookie = (await context.cookies()).find((c) => c.name === "kimi_session");
+  const owner = cookie
+    ? createHash("sha256").update(cookie.value).digest("hex")
+    : null;
+  try {
+    expect(cookie?.value).toBeTruthy();
+    const marker = `b1-${Date.now().toString(36)}`;
+    const [item] = await db
+      .insert(conversations)
+      .values({
+        owner: owner!,
+        title: `B1 probe ${marker}`,
+        messages: [
+          {
+            id: crypto.randomUUID(),
+            role: "user",
+            content: `content marker ${marker}`,
+          },
+        ],
+      })
+      .returning();
+    // The generated column exists and is database-maintained on insert.
+    const generated = await db.execute(
+      sql`SELECT search_text FROM conversations WHERE id = ${item.id}`,
+    );
+    const searchText = String(generated.rows[0]?.search_text ?? "");
+    expect(searchText).toContain(`B1 probe ${marker}`);
+    expect(searchText).toContain(`content marker ${marker}`);
+    // The trigram index exists and serves the ILIKE predicate (the planner
+    // only picks it at scale, so force it off seqscan to prove usability).
+    await db.transaction(async (tx) => {
+      await tx.execute(sql`SET LOCAL enable_seqscan = off`);
+      const plan = await tx.execute(
+        sql`EXPLAIN (COSTS OFF) SELECT id FROM conversations WHERE search_text ILIKE ${"%" + marker + "%"}`,
+      );
+      const planText = plan.rows
+        .map((row) => String(Object.values(row)[0]))
+        .join("\n");
+      expect(planText).toContain("conversations_search_idx");
+    });
+    // API behavior preserved: content-only match, owner-isolated.
+    const found = await context.request.get(
+      `${base}/api/conversations?q=${encodeURIComponent(marker)}`,
+    );
+    expect(found.status()).toBe(200);
+    expect((await found.json()).conversations).toHaveLength(1);
+    // Pass-10 L-1: a term containing a newline must never span the
+    // title/content join boundary (the pre-B1 per-field semantics could
+    // not match across fields, and the search dialog is single-line).
+    const spanning = await context.request.get(
+      `${base}/api/conversations?q=${encodeURIComponent(`${marker}\ncontent`)}`,
+    );
+    expect(spanning.status()).toBe(200);
+    expect((await spanning.json()).conversations).toHaveLength(0);
+    await context.request.delete(`${base}/api/conversations/${item.id}`, {
+      headers: { Origin: base },
+    });
   } finally {
     if (owner) await db.delete(sessions).where(eq(sessions.id, owner));
     await context.close();
