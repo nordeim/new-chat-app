@@ -1,34 +1,37 @@
 $ git pull
 remote: Enumerating objects: 78, done.
 remote: Counting objects: 100% (78/78), done.
-remote: Compressing objects: 100% (18/18), done.
-remote: Total 56 (delta 36), reused 56 (delta 36), pack-reused 0 (from 0)
-Unpacking objects: 100% (56/56), 33.36 KiB | 202.00 KiB/s, done.
+remote: Compressing objects: 100% (19/19), done.
+remote: Total 47 (delta 25), reused 47 (delta 25), pack-reused 0 (from 0)
+Unpacking objects: 100% (47/47), 32.75 KiB | 270.00 KiB/s, done.
 From github.com:nordeim/new-chat-app
-   b6c7227..f4de984  main       -> origin/main
-Updating b6c7227..f4de984
+   2689b64..ed644c0  main       -> origin/main
+Updating 2689b64..ed644c0
 Fast-forward
- AGENTS.md                          |  16 +++++++++-------
- CLAUDE.md                          |  12 ++++++------
- Project_Architecture_Document.md   |  68 +++++++++++++++++++++++++++++++++++++++++---------------------------
- README.md                          |  19 +++++++++++++------
- docker-compose.yml                 |   4 +++-
- docs/CODE_REVIEW_REPORT.md         | 104 ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
- new-chat_SKILL.md                  |  36 +++++++++++++++++++-----------------
- next.config.ts                     |  13 +++++++++++--
- remediation-plan-2026-09-12.md     |  31 +++++++++++++++++++++++++++++++
- src/app/api/chat/route.ts          |  18 ++++++++++++++++++
- src/app/api/conversations/route.ts |  18 +++++++++++++++++-
- src/lib/keepalive.ts               |  29 +++++++++++++++++++++++++++++
- src/lib/server.ts                  |   9 +++++++--
- src/lib/throttle.ts                |  76 ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
- tests/heartbeat.test.mjs           |  76 ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
- tests/stream-ui.spec.ts            |  67 +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
- tests/throttle.test.mjs            | 118 ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
- tests/workspace.spec.ts            |  66 ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++--------
- 18 files changed, 703 insertions(+), 77 deletions(-)
- create mode 100644 remediation-plan-2026-09-12.md
- create mode 100644 src/lib/keepalive.ts
- create mode 100644 src/lib/throttle.ts
- create mode 100644 tests/heartbeat.test.mjs
- create mode 100644 tests/throttle.test.mjs
+ AGENTS.md                                             |  14 +++++-----
+ CLAUDE.md                                             |  18 ++++++-------
+ Project_Architecture_Document.md                      |  45 ++++++++++++++++---------------
+ README.md                                             |  27 ++++++++++++-------
+ docs/CODE_REVIEW_REPORT.md                            |  61 ++++++++++++++++++++++++++++++++++++++++++
+ drizzle/0001_lush_arachne.sql                         |  17 ++++++++++++
+ drizzle/meta/0001_snapshot.json                       | 174 ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+ drizzle/meta/_journal.json                            |   7 +++++
+ infrastructure/postgres/init/00-create-extensions.sql |  16 +++++++++++-
+ new-chat_SKILL.md                                     |  71 ++++++++++++++++++++++++-------------------------
+ remediation-plan-2026-09-13.md                        |  40 ++++++++++++++++++++++++++++
+ src/app/api/chat/route.ts                             |  16 +++++++-----
+ src/app/api/conversations/route.ts                    |  41 ++++++++++++++++-------------
+ src/db/schema.ts                                      |  14 ++++++++++
+ src/lib/client-key.ts                                 |  47 +++++++++++++++++++++++++++++++++
+ src/lib/server.ts                                     |  30 ++++++++++++++++++++-
+ src/lib/throttle.ts                                   |  24 ++++++++++-------
+ tests/client-key.test.mjs                             |  68 +++++++++++++++++++++++++++++++++++++++++++++++
+ tests/stream-ui.spec.ts                               |  60 ++++++++++++++++++++++++++++++++++++++++++
+ tests/throttle.test.mjs                               |  12 ++++-----
+ tests/workspace.spec.ts                               | 215 ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++-
+ 21 files changed, 892 insertions(+), 125 deletions(-)
+ create mode 100644 drizzle/0001_lush_arachne.sql
+ create mode 100644 drizzle/meta/0001_snapshot.json
+ create mode 100644 remediation-plan-2026-09-13.md
+ create mode 100644 src/lib/client-key.ts
+ create mode 100644 tests/client-key.test.mjs
