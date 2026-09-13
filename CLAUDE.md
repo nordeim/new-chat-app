@@ -70,7 +70,7 @@ npm ci                                # Node.js >= 22
 cp .env.example .env                  # set DATABASE_URL (NVIDIA_API_KEY optional for UI tests)
 # Local Postgres (Docker) — once per cold-start:
 docker compose up -d                  # postgres:17 on 127.0.0.1:5433 (healthy in ~10s)
-npm run db:setup                      # migrate + seed in one (curated JSON; idempotent — 1/1 fresh → 0/0 warm)
+npm run db:setup                      # migrate + seed in one (curated JSON; idempotent — 2/2 fresh → 0/0 warm)
 # Or step-by-step: npm run db:migrate (logs hash/sessions) + npm run db:seed (logs inserted/reason)
 curl http://localhost:3000/api/health # {"ok":true} — DB reachable
 npm run dev                           # http://localhost:3000
@@ -92,7 +92,7 @@ npm run dev                           # http://localhost:3000
 | `npm run db:generate` | Generate SQL migration from `src/db/schema.ts` → `drizzle/*.sql` + `drizzle/meta` (commit both) |
 | `npm run db:migrate` | Apply migrations (journal-driven, idempotent; logs `hash/sessions`; `[✓]` appears for both fresh and no-op — check logged hash) |
 | `npm run db:seed` | Seed demo workspace on fresh DB (`{inserted:1, reason:"seeded demo workspace"}` → `{inserted:0, reason:"already seeded"}` on re-run) |
-| `npm run db:setup` | `migrate + seed` in one (logs `{migrationsApplied, inserted, hash, sessions}`; `1/1` fresh → `0/0` warm; curated `PostgreSQL not reachable` preflight) |
+| `npm run db:setup` | `migrate + seed` in one (logs `{migrationsApplied, inserted, hash, sessions}`; `2/2` fresh → `0/0` warm; curated `PostgreSQL not reachable` preflight) |
 | `npx drizzle-kit push` | Push schema directly (prototyping only — not production-safe) |
 
 ### Server Restart Procedures
@@ -137,9 +137,9 @@ curl -s http://localhost:3000/api/conversations | grep configured
 
 ### Test Pyramid
 
-- Unit (`tests/core.test.mjs`, `tests/origin.test.mjs`, `tests/stream-limit.test.mjs`, `tests/heartbeat.test.mjs`, `tests/throttle.test.mjs`; 55 total): zod schemas, SSE parser edge cases (LF/CRLF/CR, split chunks, size limits, the configurable browser/provider bounds, comment-frame tolerance), the pure same-origin gate, sidebar history grouping + relative time, markdown node-text extraction, load-failure copy selection, title derivation (whitespace collapse + dual cap: 70 code points and 100 UTF-16 units, surrogate-safe), the keep-alive helper (interval math, stop semantics, RangeError validation), and the search rate limiter (burst/window slide/partial expiry/key isolation/entry cap/RangeError) — fast, no services.
-- **API/integration** (`tests/workspace.spec.ts`): session isolation, ownership, origin enforcement, cookie flags, `?q=` search, retention pruning — Playwright request context + Drizzle fixtures.
-- **E2E/UI** (`tests/workspace.spec.ts`, `tests/stream-ui.spec.ts`, `tests/recovery.spec.ts`, `tests/network-recovery.spec.ts`; 34 local total — 33 after the keep-alive test plus the search rate-limit API test): user journeys, WCAG AA via axe (welcome, dialogs, **and the error state**), streamed-answer rendering through transport fixtures (no live provider needed) — including stop-control abort, malformed-frame copy, code-copy, lightbox, skip link, character counter, DB-outage copy, failed-search fallback + retry, failed-navigation send-destination guard, network-failure copy, mutation-failure curated toast copy, the 409 delete-while-generating guard, the pinned CSP/COOP/CORP header baseline, interleaved `: keep-alive` comment frames, and the per-session search rate limit with unlimited plain listing.
+- Unit (`tests/core.test.mjs`, `tests/origin.test.mjs`, `tests/stream-limit.test.mjs`, `tests/heartbeat.test.mjs`, `tests/throttle.test.mjs`, `tests/client-key.test.mjs`; 62 total): zod schemas, SSE parser edge cases (LF/CRLF/CR, split chunks, size limits, the configurable browser/provider bounds, comment-frame tolerance), the pure same-origin gate, sidebar history grouping + relative time, markdown node-text extraction, load-failure copy selection, title derivation (whitespace collapse + dual cap: 70 code points and 100 UTF-16 units, surrogate-safe), the keep-alive helper (interval math, stop semantics, RangeError validation), the search rate limiter (burst/window slide/partial expiry/key isolation/entry cap/RangeError), and the session-mint key derivation (cf-connecting-ip precedence, rightmost x-forwarded-for, IP-shape validation, spoofed first values ignored) — fast, no services.
+- **API/integration** (`tests/workspace.spec.ts`): session isolation, ownership, origin enforcement, cookie flags, `?q=` search (including the indexed generated column's infrastructure contract), lease-conflict 429s with recovery, the per-network session-mint throttle, retention pruning — Playwright request context + Drizzle fixtures.
+- **E2E/UI** (`tests/workspace.spec.ts`, `tests/stream-ui.spec.ts`, `tests/recovery.spec.ts`, `tests/network-recovery.spec.ts`; 38 local total — 34 pass-9 tests plus the B1 index test, the lease-conflict 429 test, the session-mint throttle test, and the export-download test): user journeys, WCAG AA via axe (welcome, dialogs, **and the error state**), streamed-answer rendering through transport fixtures (no live provider needed) — including stop-control abort, malformed-frame copy, code-copy, lightbox, skip link, character counter, DB-outage copy, failed-search fallback + retry, failed-navigation send-destination guard, network-failure copy, mutation-failure curated toast copy, the 409 delete-while-generating guard, the pinned CSP/COOP/CORP header baseline, interleaved `: keep-alive` comment frames, the per-session search rate limit with unlimited plain listing, and the markdown export download (filename + transcript).
 - **Live deployment** (`tests/live-site.spec.ts`): env-gated via `LIVE_SITE_URL`; validates a real deployment (headers, Secure cookie, exact-403 cross-origin writes, API contract, session isolation, and one provider round-trip when configured — verified into persisted storage via the read API, with the test deleting only its own conversation; its error race is scoped to `.error-banner` because of the route announcer above).
 
 ### Test Commands
@@ -154,7 +154,7 @@ npm run prune -- --idle-days 30                # retention (ops)
 
 E2E prerequisites: `npm run build && npm start`, disposable `DATABASE_URL` (fixtures are inserted/deleted), **no** `NVIDIA_API_KEY` (missing-key UX is part of the spec), `TEST_BASE_URL` for non-default origins.
 
-Audit history: the severity-ranked review at `docs/CODE_REVIEW_REPORT.md` records what was checked, what was fixed, and open backlog items — read it before planning changes (latest: pass 8, 2026-09-11 — hardened CSP baseline + COOP/CORP landed via TDD; header test in `workspace.spec.ts` pins the policy). Live-deployment status (verified 2026-09-11): all live checks pass except the provider round-trip — the deployed `NVIDIA_API_KEY` is rejected by NVIDIA (401/403) while `configured: true`; key rotation is the operator action that restores live chat (code path verified working via its curated-error route).
+Audit history: the severity-ranked review at `docs/CODE_REVIEW_REPORT.md` records what was checked, what was fixed, and open backlog items — read it before planning changes (latest: pass 9, 2026-09-12 — search rate limit + keep-alive + CSP analytics origins landed via TDD). Live-deployment status (verified 2026-09-13, session 5): **all 12 live checks pass including the provider round-trip** — the operator redeployed with a valid `NVIDIA_API_KEY` (nonce send streamed, persisted with reasoning stripped, self-cleaned); exploratory pass over rename/export/search/image/delete found zero issues. Historical-key rotation (SSH key and old `nvapi-` key in git history) remains the standing operator item.
 
 ## Code Quality Standards
 
@@ -186,20 +186,20 @@ Audit history: the severity-ranked review at `docs/CODE_REVIEW_REPORT.md` record
 
 ### Architecture
 
-Request path: browser → `/api/chat` → origin + session + lease → conversation upsert (retry-safe) → NVIDIA SSE → parse/validate → persist final answer → SSE events (`meta`, `thinking`, `delta`, `done`, `error`) → browser. While the provider is silent the route emits `: keep-alive` comment frames every 15 s (`src/lib/keepalive.ts`) so proxy idle timeouts (Cloudflare ~100 s, nginx `proxy_read_timeout`) cannot cut the stream before the route's own provider timeout delivers its curated error. The SSE parser (`src/lib/sse.ts`) is shared by server and client and ignores non-`data:` lines — changes affect both.
+Request path: browser → `/api/chat` → origin + session + lease (the uniform admission gate — the provider-key check follows it so 429 conflict behavior is reachable without a key; a missing key then 503s and releases the lease) → conversation upsert (retry-safe) → NVIDIA SSE → parse/validate → persist final answer → SSE events (`meta`, `thinking`, `delta`, `done`, `error`) → browser. While the provider is silent the route emits `: keep-alive` comment frames every 15 s (`src/lib/keepalive.ts`) so proxy idle timeouts (Cloudflare ~100 s, nginx `proxy_read_timeout`) cannot cut the stream before the route's own provider timeout delivers its curated error. The SSE parser (`src/lib/sse.ts`) is shared by server and client and ignores non-`data:` lines — changes affect both.
 
 ### API Design
 
 | Endpoint | Method | Notes |
 |----------|--------|-------|
 | `/api/chat` | POST | SSE stream; origin-checked (proxy-aware); session lease (429 on conflict) |
-| `/api/conversations` | GET | Sets session cookie; returns list + `configured` flag; optional `?q=` server-side search over titles and message content — the `?q=` path is rate-limited per session (10 / 10 s; plain listing unlimited) because the JSONB expansion costs real DB CPU on image-heavy workspaces |
+| `/api/conversations` | GET | Sets session cookie; returns list + `configured` flag; optional `?q=` server-side search over the database-maintained `search_text` column (title + message contents, trigram-GIN-indexed, owner-filtered) — rate-limited per session (10 / 10 s) as defense-in-depth for sub-three-character terms; NEW-session minting is bounded per network (60 / 10 s; valid-cookie requests unlimited) |
 | `/api/conversations/[id]` | GET/PATCH/DELETE | Ownership enforced; rename validates 1–100 chars; delete is transactional and refuses while a response is running |
 | `/api/health` | GET | DB connectivity only; does not validate the provider key |
 
 ### Database / Data Layer
 
-- **Source of truth:** `drizzle.config.ts` reads `DATABASE_URL` via `dotenv/config` (`verbose:true strict:true`); no hard-coded URL. `drizzle` schema `drizzle` / table `__drizzle_migrations` stores hash `d5d43cb…`; SQL `drizzle/0000_flimsy_sage.sql`; extensions `pgcrypto` + `pg_trgm` via `infrastructure/postgres/init/00-create-extensions.sql` (once per volume).
+- **Source of truth:** `drizzle.config.ts` reads `DATABASE_URL` via `dotenv/config` (`verbose:true strict:true`); no hard-coded URL. `drizzle` schema `drizzle` / table `__drizzle_migrations` stores hashes `d5d43cb…` (0000) and `f8e8d0e…` (0001); SQL `drizzle/0000_flimsy_sage.sql` + `drizzle/0001_lush_arachne.sql` (pg_trgm extension, the `messages_content_text` IMMUTABLE helper, the `search_text` generated column, and the GIN index); extensions `pgcrypto` + `pg_trgm` and the helper are installed both via `infrastructure/postgres/init/00-create-extensions.sql` (once per volume; also serves the `drizzle-kit push` prototyping path) and via migration 0001 itself (self-contained for CI's service container).
 - **Pool:** `src/db/index.ts` `pg.Pool` cached on `globalThis` in dev, `drizzle(pool)`; throws at import if `DATABASE_URL` missing — every API route fails fast.
 - **Lifecycle:** `npm run db:generate` (edit schema → generate) → `npm run db:migrate` (wrapper: preflight `select 1` → `spawnSync drizzle-kit migrate` → post `{hash,sessions}`) → `npm run db:seed` (idempotent, `{inserted,reason,sessions}`) → `npm run db:setup` (migrate+seed, `{migrationsApplied,inserted}`). All via `node --experimental-strip-types scripts/*.mjs` (explicit `.ts` imports, injected `{db,tables}`).
 - **Idempotency:** `migrate` no-op when hash matches (same `[✓]` — check logged hash); `seed` `inserted:0` when `count>0` means "already seeded", not failure.

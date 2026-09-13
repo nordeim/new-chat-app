@@ -627,3 +627,64 @@ The application code remains **shippable**; live effect of this pass's fixes lan
 5. B1: indexed server-side search (generated `search_text` + `pg_trgm` GIN) as the complete M-1 closure — schema-migration decision.
 6. Nonce-based CSP `script-src` (I3 residue — deploy-time; requires dynamic rendering tradeoff).
 7. Ingress-level rate limiting for session-row creation (M3).
+
+---
+
+# Pass 10 — Session 5 (2026-09-13): live re-verification, backlog closure, tiered audit, remediation
+
+**Scope:** fresh clone of `main` at `2689b64`; full gate-chain reproduction; live-deployment E2E + exploratory browser pass against `https://kimi-chat.jesspete.shop/`; pass-9 backlog closure (B1, I2, M3 app-level, export coverage) via TDD; two-subagent tiered audit over the session diff; remediation of its findings; full documentation sync.
+
+## Live verification (supersedes pass-9's 10/12)
+
+**12/12 live E2E — the operator redeployed with a valid provider key since pass 9.** Both pass-9 live failures are resolved: (1) the deployed CSP now carries the Cloudflare Web Analytics origins (no beacon console errors on page load), and (2) the provider round-trip works end to end — a nonce-marked send streams an assistant answer, renders it, persists it (verified through the read API with `reasoning` stripped), and deletes only its own conversation. An additional exploratory browser pass beyond the suite (rename via the topbar control, markdown export download, message-content search through the ⌘K dialog, image attach/remove, multi-turn follow-up, delete) found **zero issues and zero console errors**. Two short test conversations from a first exploratory attempt (wrong locators, session cookie lost) remain in the live DB under an orphaned session until the retention prune runs — disclosed, not hidden.
+
+## Improvement changes landed this pass (TDD, red → green)
+
+- **B1 — indexed server-side search (complete M-1 closure):** `conversations.search_text` STORED generated column (`title || E'\n' || messages_content_text(messages)`; the helper is IMMUTABLE SQL extracting message contents and excluding image payloads), `conversations_search_idx` GIN `gin_trgm_ops`, migration `drizzle/0001_lush_arachne.sql` (self-contained: ensures `pg_trgm`, `CREATE OR REPLACE FUNCTION`, backfills, builds the index; the helper is mirrored in the init script so `drizzle-kit push` works on a cold volume). The `?q=` query is now one indexed ILIKE; the 10/10 s session limit stays as defense-in-depth (sub-3-char terms cannot use trigram). RED: an E2E test asserting the column, the index (EXPLAIN with seqscan off), and unchanged behavior — failed on "column does not exist" first.
+- **I2 — lease is the uniform admission gate:** the provider-key check moved AFTER the lease claim in `/api/chat`, so conflict behavior is reachable without a provider key. New API test covers the busy-window 429, the 3 s spacing 429 (both with the exact documented copy), and recovery (the next send proceeds to the curated 503). RED observed (503-before-lease), then green. Behavior note: an immediate (<3 s) retry after a missing-key 503 now sees the 429 "sent too quickly" copy — consistent with the spacing guard's purpose; the key-check throw releases the lease.
+- **M3 (app-level) — session-mint throttle:** cookieless session-row creation bounded to 60 new sessions / 10 s / network in `ensureSession`; valid-cookie requests are never throttled. RED: a cookieless flood test observed 0 throttled, then green.
+- **Export coverage:** hermetic E2E test for the markdown export (routed API fixtures; asserts `kimi-{id}.md` filename and the `# title` / `## You` / `## Kimi` transcript).
+
+## Tiered audit (two independent subagents + mechanical scans)
+
+**Counts: 0 Critical · 0 High (code) · 1 High (documentation drift) · 3 Medium · 8 Low · several Informational.** The security subagent verified the migration is injection-free, the generated-column immutability claim is honest (`jsonb_array_elements`/`string_agg`/`->>` are `provolatile 'i'`), `CREATE EXTENSION` is privilege-safe for the app user, the LIKE escaping is complete, the owner filter is intact, the lease release path is correct, no secrets/PII were added, and the logs remain PII-free. The contract subagent verified all four changes match the repo's standards and produced the exhaustive drift list that drove this pass's documentation sync (38+ sentences across AGENTS/CLAUDE/README/SKILL + PAD; all fixed).
+
+| ID | Severity | Finding | Disposition |
+|----|----------|---------|-------------|
+| F-1 | Low | Mint-limiter keyed on the FIRST `x-forwarded-for` value — spoofable (forged unique values bypassed the throttle in a reproduced 500/500 flood; shared values poison another network's bucket) | **Remediated (R1):** pure `src/lib/client-key.ts` — `cf-connecting-ip` → rightmost XFF → `"direct"`, IP-shape validated (45-char bound); 7 unit tests |
+| F-2 | Low | Unvalidated XFF key strings retained in limiter memory (bounded count, unbounded bytes; ~76 MB measured at 8k-char keys) | **Remediated (R1):** IP-shape validation bounds every key to 45 characters |
+| H-1 | High (docs) | 38+ stale sentences across the four contract docs + PAD after the code changes | **Remediated (R8):** full doc sync (this pass) |
+| M-1 | Medium | Flood test fired 80 serial requests — slow runners could stretch past the 10 s window | **Remediated (R2):** concurrent `Promise.all` flood + Set-Cookie-token capture |
+| M-2 | Medium | `throttle.ts` header claimed a single call site | **Remediated (R3):** header documents both call sites |
+| M-3 | Medium | B1 storage/write-path cost (content-text copy + trigram index; ACCESS EXCLUSIVE backfill lock) — documented tradeoff | Documented (README change-table + PAD + here) |
+| L-1 | Low | Newline-containing `?q=` terms could span the title/content join boundary | **Remediated (R5):** server-side whitespace-run collapse; RED→GREEN assertion added |
+| L-2 | Low | 429-after-503 retry-precedence change (see I2 note) | Documented (AGENTS/CLAUDE/README) |
+| L-3 | Low | `drizzle-kit push` failed on a cold DB (helper function missing) | **Remediated (R4):** `CREATE OR REPLACE` in the migration + helper mirrored in the init script; migration reset and re-applied cleanly (hash `f8e8d0e…`) |
+| L-4 | Low | Flood test cleanup swept all empty sessions globally | **Remediated (R6):** precise owner-addressed deletes from captured tokens |
+| L-5/L-6 | Low | Formatting nit; SKILL footer version | **Remediated** (R7/R8) |
+
+## Verification ledger (pass 10)
+
+```
+npm run typecheck            → ✓ Types generated successfully (exit 0)
+npm run lint                 → exit 0, 0 problems
+npm test                     → 62 tests, 62 pass, 0 fail (55 baseline + 7 client-key)
+npm run build                → ✓ Compiled successfully, 6 routes, 5/5 pages
+npm run db:migrate           → hash f8e8d0e… applied; second run no-op
+npm run db:seed              → inserted:0 (already seeded)
+npm audit --omit=dev         → found 0 vulnerabilities
+git grep (secret scan scope) → clean
+TEST_BASE_URL=… npx playwright test → 38 passed, 12 skipped (live) — 34 baseline + B1 + lease-429 + mint-throttle + export-download
+LIVE_SITE_URL=https://kimi-chat.jesspete.shop npx playwright test tests/live-site.spec.ts → 12 passed (1.9m)
+exploratory browser pass (v2, real ARIA contract) → 10 ok, 0 issues, 0 console errors
+local provider probe with the session's test key  → NVIDIA 429 (rate-limited account); route surfaced the curated timeout copy and warn-level abort log — error path verified working, no partial persistence
+```
+
+## Remediation backlog (operator / next pass)
+
+1. Rotate the SSH deployment key and the NVIDIA key in git history (C1/C2 chain); decide on history rewrite with operator sign-off.
+2. Schedule retention (`npm run prune -- --idle-days 30`) via weekly cron (I6) — it would also reap the two orphaned exploratory-test conversations in the live DB.
+3. Nonce-based CSP `script-src` (I3 residue — deploy-time; requires the dynamic-rendering tradeoff).
+4. Ingress-level rate limiting for session-row creation and global spend quotas (M3's ingress tier — the app-level bound is defense-in-depth only).
+5. Redeploy the production build so session-5 code (indexed search, lease admission gate, mint throttle) reaches the live site; the migration is additive and backward-compatible with the running deployment (old code ignores `search_text`).
+6. M4 (4 moderate dev-only esbuild advisories; prod audit clean) — carried.

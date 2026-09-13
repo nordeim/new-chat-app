@@ -1,10 +1,10 @@
-# new-chat SKILL — Kimi Workspace Engineering Reference v1.3
+# new-chat SKILL — Kimi Workspace Engineering Reference v1.4
 
 > **Project:** Kimi Workspace (`nordeim/new-chat-app`) · **Scope:** Next.js 16 App Router + React 19 + Tailwind v4 (CSS-first) + Drizzle ORM + PostgreSQL 17 + NVIDIA NIM `moonshotai/kimi-k3`
-> **State at distillation:** `cb8a05e` (PAD v1.0) → `f888508` verified (migrate [✓], seed 1→0, build 662 ms, `TEST_BASE_URL=http://localhost:3004` 12 skipped 16 passed) · **v1.1:** `41/41` unit + `deriveTitle` (pass 7) · **v1.2 HEAD `9000aca`** verified `typecheck→lint→41/41→build 5/5→header probe hardened CSP` (pass 8: `32` local incl. CSP header `workspace.spec.ts:349`, `COOP/CORP same-origin`) · **v1.3 (pass 9, 2026-09-12):** `55/55` unit + `34/34` local E2E; CSP + Cloudflare Web Analytics origins; `: keep-alive` SSE comment frames (`src/lib/keepalive.ts`); `?q=` rate limit 10/10 s (`src/lib/throttle.ts`); error responses `no-store` · **Style:** Mint-calm editorial, `kimi.` brand, `WORKSPACE` vertical label
+> **State at distillation:** `cb8a05e` (PAD v1.0) → `f888508` verified (migrate [✓], seed 1→0, build 662 ms, `TEST_BASE_URL=http://localhost:3004` 12 skipped 16 passed) · **v1.1:** `41/41` unit + `deriveTitle` (pass 7) · **v1.2 HEAD `9000aca`** verified `typecheck→lint→41/41→build 5/5→header probe hardened CSP` (pass 8: `32` local incl. CSP header `workspace.spec.ts:349`, `COOP/CORP same-origin`) · **v1.3 (pass 9, 2026-09-12):** `55/55` unit + `34/34` local E2E; CSP + Cloudflare Web Analytics origins; `: keep-alive` SSE comment frames (`src/lib/keepalive.ts`); `?q=` rate limit 10/10 s (`src/lib/throttle.ts`); error responses `no-store` · **v1.4 (session 5, 2026-09-13):** live deployment re-verified **12/12** including the provider round-trip (operator redeployed with a valid key; pass-9 A2 stall resolved); exploratory pass (rename/export/search-by-content/image attach/delete/multi-turn) zero issues, zero console errors; closed backlog B1 (indexed `search_text` + `pg_trgm` GIN, migration 0001), I2 (lease = uniform admission gate, key check after lease, 429 tested), M3 app-level (session-mint throttle 60/10 s via `src/lib/client-key.ts`), export-download E2E; gates `typecheck→lint→62/62→build→38/38` · **Style:** Mint-calm editorial, `kimi.` brand, `WORKSPACE` vertical label
 > **Audience:** Future AI agents + senior engineers extending, debugging, or replicating this codebase
-> **Companion docs:** `Project_Architecture_Document.md` v1.3 (definitive blueprint, 12 sections, pass-9 commits), `README.md` (onboarding, PG 17, hardened CSP + CF-analytics origins), `AGENTS.md` (ops rules, positional retention + hardened CSP prose), `CLAUDE.md` (six-phase workflow), `docs/CODE_REVIEW_REPORT.md` (passes 3–9 ledger)
-> **Method:** Six-phase distillation (ANALYZE → PLAN → VALIDATE → IMPLEMENT → VERIFY → DELIVER) — every claim traces to a file/command at the pass-9 commits
+> **Companion docs:** `Project_Architecture_Document.md` v1.4 (definitive blueprint, 12 sections, session-5 commits), `README.md` (onboarding, PG 17, hardened CSP + CF-analytics origins), `AGENTS.md` (ops rules, positional retention + hardened CSP prose), `CLAUDE.md` (six-phase workflow), `docs/CODE_REVIEW_REPORT.md` (passes 3–10 ledger)
+> **Method:** Six-phase distillation (ANALYZE → PLAN → VALIDATE → IMPLEMENT → VERIFY → DELIVER) — every claim traces to a file/command at the session-5 commits
 
 ---
 
@@ -73,7 +73,7 @@
 
 ## 2. Tech Stack & Environment
 
-Locked at the pass-9 commits — every version from `package.json` + lockfile + `drizzle.config.ts` + `next.config.ts` + `docker-compose.yml` (verified: `typecheck→lint→55/55→build 5/5→34/34 local E2E→header probe hardened CSP incl. CF-analytics origins`).
+Locked at the session-5 commits — every version from `package.json` + lockfile + `drizzle.config.ts` + `next.config.ts` + `docker-compose.yml` (verified: `typecheck→lint→62/62→build 5/5→38/38 local E2E→header probe hardened CSP incl. CF-analytics origins`).
 
 | Layer | Technology | Version | Critical Note |
 |-------|------------|---------|---------------|
@@ -83,12 +83,12 @@ Locked at the pass-9 commits — every version from `package.json` + lockfile + 
 | Styling | Tailwind CSS (CSS-first) + PostCSS | `4.3.3` + `@tailwindcss/postcss 4.3.3` / `postcss 8.5.28` | CSS-first `@theme` in `globals.css` — no `tailwind.config.js`; tokens single-source `--mint` etc. |
 | Primitives | Radix UI Dialog | `1.1.23` | Only outside primitive — mobile drawer modal (focus trap, Escape, `onCloseAutoFocus` → opener). |
 | Validation | zod | `4.6.1` | Single home `src/lib/validation.ts` — shared server/client/unit; `safeParse` at every boundary. |
-| ORM + Driver | Drizzle ORM + `pg` + `drizzle-kit` | `0.45.2` / `8.23.0` / `0.31.10` | Parameterized only; JSONB `messages`; journal `drizzle/meta/_journal.json` + SQL `drizzle/0000_flimsy_sage.sql` (15 lines). |
+| ORM + Driver | Drizzle ORM + `pg` + `drizzle-kit` | `0.45.2` / `8.23.0` / `0.31.10` | Parameterized only; JSONB `messages` + generated `search_text` column (GIN `gin_trgm_ops`); journal `drizzle/meta/_journal.json` + SQL `drizzle/0000_flimsy_sage.sql` + `drizzle/0001_lush_arachne.sql` (pg_trgm, `messages_content_text` IMMUTABLE helper, generated column, index — self-contained for CI). |
 | DB | PostgreSQL | `17-alpine` (local), `14+` compat | `postgres:17-alpine`, `chat_data` volume, `pgcrypto` (gen_random_uuid) + `pg_trgm` init, `127.0.0.1:5433:5432` loopback-only (pass-9 L-1). |
 | AI Provider | NVIDIA NIM (OpenAI-compat) | `https://integrate.api.nvidia.com/v1/chat/completions` `moonshotai/kimi-k3` `stream:true` `Accept: text/event-stream` | Server-only `NVIDIA_API_KEY` (never `NEXT_PUBLIC_`); `temperature 1`, `max_tokens 16384`, `reasoning_effort max` defaults; `image_url` blocks; `reasoning_content` persisted then stripped. |
 | Icons / MD | lucide-react + react-markdown + remark-gfm | `1.43.0` / `10.1.0` / `4.0.1` | `KimiMark` bespoke SVG + 20+ lucide; markdown `a→_blank noopener`, `img→[Image]` sanitized. |
-| Testing — Unit | node:test | Node ≥22 | `--experimental-strip-types` keeps imports `.ts` with explicit `.ts` extensions; **55 tests** (`core 31 incl. 10 deriveTitle + origin 7 + stream-limit 3 + heartbeat 6 + throttle 8`, ~900 ms). |
-| Testing — E2E/WCAG | Playwright + @axe-core/playwright | `1.63.0` / `4.13.0` | `workspace.spec.ts` **15** (incl. hardened CSP header incl. CF-analytics origins + `?q=` rate limit) + `stream-ui` **13** (incl. keep-alive comment frames) + `recovery` **5** + `network-recovery` **1** + `live-site` **12** gated; **34 local** (+12 live gated); `workers:1`, `timeout 60s`, `reuseExistingServer:true`; header test pins `default-src 'self'` + directives + `COOP/CORP same-origin`. |
+| Testing — Unit | node:test | Node ≥22 | `--experimental-strip-types` keeps imports `.ts` with explicit `.ts` extensions; **62 tests** (`core 31 incl. 10 deriveTitle + origin 7 + stream-limit 3 + heartbeat 6 + throttle 8 + client-key 7`, ~900 ms). |
+| Testing — E2E/WCAG | Playwright + @axe-core/playwright | `1.63.0` / `4.13.0` | `workspace.spec.ts` **18** (incl. hardened CSP header + `?q=` rate limit + B1 index + lease 429 + mint throttle) + `stream-ui` **14** (incl. keep-alive comment frames + export download) + `recovery` **5** + `network-recovery` **1** + `live-site` **12** gated; **38 local** (+12 live gated); `workers:1`, `timeout 60s`, `reuseExistingServer:true`; header test pins `default-src 'self'` + directives + `COOP/CORP same-origin`. |
 | Build | Next Turbopack + tsc + ESLint flat | `eslint 9.39.5` / `eslint-config-next 16.3.4` | `eslint.config.mjs` `globalIgnores` non-app; `typecheck` is `next typegen` then `tsc`. |
 | Local Infra | Docker Compose | `chat_data` `chat_net` bridge | `new_chat_postgres` `healthy` 5s interval; `127.0.0.1:5433:5432` avoids Scandi Haven `5432` and stays loopback-only. |
 | CI | GitHub Actions + postgres:17 service | Node 22 | `gates` (secret scan→typecheck→lint→test→build→audit) + `e2e` (service PG, `db:migrate`, build, `playwright chromium`) on `branches: [main]`. |
@@ -119,13 +119,13 @@ npm run dev                    # http://localhost:3000 — mint workspace (or PO
 | File | Purpose | Key rule |
 |------|---------|----------|
 | `tsconfig.json` | `target ES2017`, `jsx react-jsx`, `strict/noEmit/isolatedModules/bundler`, `baseUrl .`, `paths @/* → src/*`, `include next-env + **/*.ts/tsx + .next/types`, `exclude node_modules/skills/sample-build/docs` | Excludes reference material — never app code; never remove excludes. |
-| `next.config.ts` | `async headers() → X-Content-Type-Options nosniff, X-Frame-Options DENY, Strict-Transport-Security max-age=63072000; includeSubDomains, Referrer-Policy strict-origin-when-cross-origin, Permissions-Policy camera/microphone/geolocation=(), **hardened CSP** `default-src 'self'; script-src 'self' 'unsafe-inline' https://static.cloudflareinsights.com (+dev unsafe-eval); style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self' https://cloudflareinsights.com; form-action 'self'; frame-ancestors 'none'; base-uri 'self'; object-src 'none'` + `COOP/CORP same-origin` (pinned by `workspace.spec.ts:349`, `34/34` green; CF origins because zones with Web Analytics inject the beacon zone-wide — pass 9) | Headers versioned with code — keep intact; update test + doc together. |
+| `next.config.ts` | `async headers() → X-Content-Type-Options nosniff, X-Frame-Options DENY, Strict-Transport-Security max-age=63072000; includeSubDomains, Referrer-Policy strict-origin-when-cross-origin, Permissions-Policy camera/microphone/geolocation=(), **hardened CSP** `default-src 'self'; script-src 'self' 'unsafe-inline' https://static.cloudflareinsights.com (+dev unsafe-eval); style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self' https://cloudflareinsights.com; form-action 'self'; frame-ancestors 'none'; base-uri 'self'; object-src 'none'` + `COOP/CORP same-origin` (pinned by `workspace.spec.ts` header test — `:474` at session 5; `38/38` green; CF origins because zones with Web Analytics inject the beacon zone-wide — pass 9) | Headers versioned with code — keep intact; update test + doc together. |
 | `eslint.config.mjs` | `defineConfig([...nextCoreWebVitals, globalIgnores(.next/out/build/next-env/skills/sample-build/docs)])` | Non-app is type/lint-excluded. |
 | `postcss.config.mjs` | `{ plugins: {"@tailwindcss/postcss": {}} }` | Wires Tailwind v4 CSS-first. |
 | `drizzle.config.ts` | `import "dotenv/config"`, `if (!DATABASE_URL) throw`, `defineConfig({ dialect:"postgresql", schema:"./src/db/schema.ts", out:"./drizzle", dbCredentials:{url: DATABASE_URL}, verbose:true, strict:true })` | Single source `DATABASE_URL` — no hard-coded sandbox URL; `npx drizzle-kit push --url="$DATABASE_URL"` for tooling. |
 | `playwright.config.ts` | `testDir ./tests`, `timeout 60_000`, `fullyParallel false`, `workers 1`, `reporter line`, `baseURL TEST_BASE_URL ?? http://localhost:3000`, `trace retain-on-failure`, `projects chromium Desktop Chrome`, `webServer: npm start, url localhost:3000, reuseExistingServer true` (skipped when `TEST_BASE_URL` set) | E2E needs `npm run build && npm start` + disposable `DATABASE_URL` + no `NVIDIA_API_KEY`. |
 | `docker-compose.yml` | `postgres:17-alpine`, `container_name new_chat_postgres`, `POSTGRES_DB chat_db`, `POSTGRES_USER chat_user`, `POSTGRES_PASSWORD chat_secret`, `ports 5433:5432`, volumes `chat_data` + `infrastructure/postgres/init`, healthcheck `pg_isready -U chat_user -d chat_db` 5s interval 10 retries, network `chat_net` | `5433` avoids host `5432` clash with sibling `scandihaven_postgres`. |
-| `infrastructure/postgres/init/00-create-extensions.sql` | `CREATE EXTENSION IF NOT EXISTS pgcrypto` (gen_random_uuid) + `pg_trgm` + `RAISE NOTICE` | Runs once on first `chat_data` creation. |
+| `infrastructure/postgres/init/00-create-extensions.sql` | `CREATE EXTENSION IF NOT EXISTS pgcrypto` (gen_random_uuid) + `pg_trgm` + `CREATE OR REPLACE FUNCTION messages_content_text(jsonb)` (the generated-column helper) + `RAISE NOTICE` | Runs once on first `chat_data` creation; the function copy keeps `npx drizzle-kit push` working on a cold DB (migration 0001 installs the same objects idempotently). |
 | `.github/workflows/ci.yml` | `on push branches [main] + pull_request`, jobs `gates` (secret scan `git grep -lIE 'nvapi-…|PRIVATE KEY|ghp_|AKIA' -- . ':!package-lock.json'` → typecheck→lint→test→build→`npm audit --omit=dev`) + `e2e` (postgres:17 service `5432`, `DATABASE_URL postgresql://postgres:postgres@127.0.0.1:5432/app_db`, `db:migrate`, build, `playwright install chromium --with-deps`, `npx playwright test`, artifact `test-results/` 7 days) | pass 3 believed it corrupted (display artifact; voided in pass 6); gate order `typecheck→lint→test→build` never weakened. |
 
 ### 3.3 Dependencies Install
@@ -222,7 +222,7 @@ src/
 │   └── api/
 │       ├── chat/route.ts    # 350 lines — see §15 Pattern 1/2 (lease + SSE)
 │       ├── conversations/
-│       │   ├── route.ts     # 70 lines — GET list/search ?q= (title+JSONB content, owner-filtered, escaped, limit 100, desc, configured flag, sets kimi_session)
+│       │   ├── route.ts     # 70 lines — GET list/search ?q= (search_text generated column, trigram GIN, owner-filtered, escaped, whitespace-collapsed, limit 100, desc, configured flag, sets kimi_session, mint throttle in ensureSession)
 │       │   └── [id]/route.ts# 130 lines — GET (strip reasoning)/PATCH (1-100, no-store)/DELETE (FOR UPDATE +409 if busy), all owner-scoped via identity()
 │       └── health/route.ts  # 15 lines — db.execute(select 1) → {ok:true}/500, no provider
 ├── components/
@@ -276,7 +276,7 @@ Radix hides `Overlay` from AT, so `.sidebar-close` lives inside drawer (`chat-wo
 ### 5.5 Auth & Query Boundary
 
 - **Auth pattern:** `ensureSession(req)` on list (`GET /api/conversations`) — generates if missing/invalid, `onConflictDoNothing`, `setSession(cookie)`. Others use `requireSession()` → 401 curated (`Your session expired. Reload…`). `sessionId()` validates `^[a-f0-9]{64}$` → `SHA-256`.
-- **Query pattern:** All `conversations` access via `eq(owner)` or `identity()` condition (`and(eq(id, param), eq(owner, hash))`). Search uses `searchPattern(term) = %${term.replace(/[\\%_]/g,"\\$&")}%` → `ilike(title, pattern)` + `sql exists (jsonb_array_elements(messages) →>'content' ilike pattern)` bound, `desc(updatedAt)`, `limit 100`.
+- **Query pattern:** All `conversations` access via `eq(owner)` or `identity()` condition (`and(eq(id, param), eq(owner, hash))`). Search uses `searchPattern(term) = %${term.replace(/[\\%_]/g,"\\$&")}%` → `ilike(conversations.searchText, pattern)` on the database-maintained generated column (title + message contents; term whitespace runs collapsed server-side), `desc(updatedAt)`, `limit 100`. Session minting in `ensureSession` is throttled per network (60/10 s) with the key from `src/lib/client-key.ts`.
 
 ---
 
@@ -389,7 +389,7 @@ Target: **WCAG 2.2 AA** (axe `wcag2a, wcag2aa, wcag21aa, wcag22aa`) on welcome, 
 | **AP-010** | **Missing-key E2E fails when real `NVIDIA_API_KEY` present** — `reports missing provider key without discarding the draft` expects 503 `Connect NVIDIA` but gets streaming attempt when key exists. Fix: run that server with `NVIDIA_API_KEY=` (or `3004 no-key` prod as in rebuild). Lesson: E2E precondition `no NVIDIA_API_KEY` is contractual — enforce via env override `NVIDIA_API_KEY= PORT=3004`. | — | `tests/workspace.spec.ts` missing-key, `.env` |
 | **AP-011** | **`sample-build` reference drift (revisited pass 6)** — the old layer targeted sample-build’s stylesheet; the current layer is additive on an identical `globals.css`. Pass 6 verified it class-by-class against this app’s markup and adopted it (tokens, welcome-settle animation fixing a transient AA dip, bloom emblem, favicon). Lesson: re-verify reference drift against the current reference before rejecting; not all sample-build assets are upgrades, and stale objections are not evidence. | ⚪ I4 (updated) | `sample-build/workspace-polish.css` |
 | **AP-012** | **100-conversation cap transient exceed by 1** — `count(*) → insert` races under concurrent creates (bounded, self-corrects via retention). | ⚪ I1 | `api/chat/route.ts` |
-| **AP-013** | **`busyUntil` lease conflict has no API 429 test** — requires valid provider key to reach lease; unit cannot cover `UPDATE … WHERE busyUntil < now` without seam. | ⚪ I2 | `api/chat/route.ts` |
+| **AP-013** | **`busyUntil` lease conflict has no API 429 test** — closed session 5: the provider-key check moved after the lease claim (uniform admission gate), so DB fixtures reach both 429 branches + recovery without a key (`workspace.spec.ts` "chat lease conflicts surface 429 with curated copy, then recover"). | ✅ I2 closed (session 5) | `api/chat/route.ts` |
 | **AP-014** | **CSP hardened baseline (pass 8)** — `default-src 'self'; script-src 'self' 'unsafe-inline' (+dev unsafe-eval); style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'self'; object-src 'none'` + `COOP/CORP same-origin` landed at `e377429` via TDD (`workspace.spec.ts:349` pins it, `32/32` green). Nonce `script-src` (forces dynamic rendering) remains deploy-time hardening. | ✅ I3 closed app-level (pass 8) | `next.config.ts`, `tests/workspace.spec.ts:349` |
 | **AP-015** | **Cloudflare Web Analytics origins + SSE keep-alive + search rate limit (pass 9)** — CSP adds `script-src … https://static.cloudflareinsights.com` + `connect-src … https://cloudflareinsights.com` (the deployed zone injects the beacon zone-wide; blocking it = console error on every page load — verified live); the chat route emits `: keep-alive` comment frames every 15 s while the provider is silent so proxy idle timeouts (Cloudflare ~100 s, nginx `proxy_read_timeout`) cannot cut the stream before the route's curated error; `?q=` bounded 10/10 s per session (`src/lib/throttle.ts`) after empirically verified JSONB-expansion amplification. | ✅ H1/H2/M-1 closed app-level (pass 9) | `next.config.ts`, `src/lib/keepalive.ts`, `src/lib/throttle.ts`, `chat/route.ts`, `conversations/route.ts` |
 
@@ -438,7 +438,7 @@ npm run typecheck          # next typegen && tsc --noEmit — strict, zero any
 npm run lint               # eslint flat + next/core-web-vitals
 
 # 3. Unit — strip-types, no build needed
-npm test                   # node --experimental-strip-types --test tests/*.test.mjs → 55/55 (core 31 incl. 10 deriveTitle + origin 7 + stream-limit 3 + heartbeat 6 + throttle 8)
+npm test                   # node --experimental-strip-types --test tests/*.test.mjs → 62/62 (core 31 incl. 10 deriveTitle + origin 7 + stream-limit 3 + heartbeat 6 + throttle 8 + client-key 7)
 
 # 4. Build — 6 routes + static assets
 npm run build              # next build Turbopack → ○ / + ○ /_not-found + ƒ /api/chat (maxDuration 600) + ƒ /api/conversations + ƒ /api/conversations/[id] + ƒ /api/health + ○ /icon.svg (5/5 pages)
@@ -455,7 +455,7 @@ npm run db:seed            # idempotent — {inserted:1} then {inserted:0}
 # If 3000 busy: use 3004 without key (rebuild runbook)
 NVIDIA_API_KEY= PORT=3004 npm start -- --port 3004 &   # bg
 sleep 3; curl -s http://localhost:3004/api/health | grep '"ok":true'
-TEST_BASE_URL=http://localhost:3004 npx playwright test   # 12 skipped live, 34 passed (workspace 15 incl. CSP header + rate limit + stream-ui 13 incl. comment frames + recovery 5 + network-recovery 1) — ~26s; header test workspace.spec.ts:349 pins hardened CSP + COOP/CORP
+TEST_BASE_URL=http://localhost:3004 npx playwright test   # 12 skipped live, 38 passed (workspace 18 incl. CSP header + rate limit + B1 index + lease 429 + mint throttle; stream-ui 14 incl. comment frames + export download; recovery 5 + network-recovery 1) — ~40s; header test pins hardened CSP + COOP/CORP
 # or npm run test:e2e (defaults to localhost:3000)
 ```
 
@@ -472,7 +472,7 @@ curl -s http://localhost:3004/api/health  # {"ok":true}
 curl -s http://localhost:3004/api/conversations   # {conversations:[],configured:false} + set-cookie HttpOnly Strict
 curl -sI http://localhost:3004/ | grep -E "content-security-policy: default-src 'self'|cross-origin-opener-policy: same-origin|cross-origin-resource-policy: same-origin"
 curl -sI http://localhost:3004/api/health | grep -E "x-frame-options: DENY|strict-transport-security: max-age=63072000|content-security-policy: default-src"
-# Live: LIVE_SITE_URL=https://kimi-chat.jesspete.shop npx playwright test tests/live-site.spec.ts  # 12/12 when redeployed
+# Live: LIVE_SITE_URL=https://kimi-chat.jesspete.shop npx playwright test tests/live-site.spec.ts  # verified 12/12 (2026-09-13, provider round-trip included)
 ```
 
 ---
@@ -608,7 +608,8 @@ curl -sI http://localhost:3004/api/health | grep -E "x-frame-options: DENY|stric
 
 ```typescript
 // Location: src/app/api/conversations/route.ts
-// Purpose: Owner-scoped list with title+JSONB content search (?q=), owner-filtered, wildcard-escaped.
+// Purpose: Owner-scoped list with search over the generated search_text column (?q=),
+// owner-filtered, wildcard-escaped, whitespace-collapsed; mint throttle lives in ensureSession.
 
 export const dynamic = "force-dynamic";
 function searchPattern(term: string){ return `%${term.replace(/[\\%_]/g,"\\$&")}%`; }
@@ -616,12 +617,12 @@ function searchPattern(term: string){ return `%${term.replace(/[\\%_]/g,"\\$&")}
 export async function GET(req: NextRequest){
   try{
     const { owner, token } = await ensureSession(req); // generates if missing
-    const term = (req.nextUrl.searchParams.get("q") ?? "").trim().slice(0,200);
+    const term = (req.nextUrl.searchParams.get("q") ?? "").trim().slice(0,200).replace(/\s+/g, " ");
     const condition = term
-      ? and(eq(conversations.owner, owner), or(
-          ilike(conversations.title, searchPattern(term)),
-          sql`exists (select 1 from jsonb_array_elements(${conversations.messages}) as m where m->>'content' ilike ${searchPattern(term)})`
-        ))
+      ? and(
+          eq(conversations.owner, owner),
+          ilike(conversations.searchText, searchPattern(term)),
+        )
       : eq(conversations.owner, owner);
     const items = await db.select({id: conversations.id, title: conversations.title, updatedAt: conversations.updatedAt})
       .from(conversations).where(condition).orderBy(desc(conversations.updatedAt)).limit(100);
@@ -963,11 +964,11 @@ type ConversationRow = { id: string; owner: string; title: string; messages: Cha
 | Operation | Cost / Time | Where enforced |
 |-----------|-------------|----------------|
 | `npm run typecheck` | ~3s (typegen + tsc) | Pre-commit + CI `gates` |
-| `npm test` | ~900 ms (55 tests: core 31 + origin 7 + stream-limit 3 + heartbeat 6 + throttle 8) | CI `gates` |
+| `npm test` | ~900 ms (62 tests: core 31 + origin 7 + stream-limit 3 + heartbeat 6 + throttle 8 + client-key 7) | CI `gates` |
 | `npm run build` | 0.6–3s Turbopack, 6 routes, 5/5 pages (`○ /icon.svg` + `maxDuration 600`) | CI `gates` |
-| `npx playwright test` | ~26s (34 passed, 12 skipped live; incl. header test `workspace.spec.ts:349`) workers 1 | CI `e2e` (postgres:17 service) |
+| `npx playwright test` | ~40s (38 passed, 12 skipped live; incl. header test) workers 1 | CI `e2e` (postgres:17 service) |
 | `POST /api/chat` | 503 when no key (8 ms), else provider latency + `175s`/`590s` timeout, `195s`/`615s` lease, `1.2M` cap + `16MB` history | `route.ts:23,70-71,153,267` + SSE `1M`/`8M` bounds |
-| `GET /api/conversations?q=` | `ilike` on `title` + `jsonb_array_elements→content` + `limit 100` + index `owner,updatedAt` | `route.ts` + `schema.ts` |
+| `GET /api/conversations?q=` | `ilike` on generated `search_text` (trigram GIN `conversations_search_idx`) + `limit 100` + index `owner,updatedAt`; mint throttle 60/10 s/network in `ensureSession` | `route.ts` + `schema.ts` + migration 0001 |
 | `pruneIdleSessions(30)` | Deletes `sessions` where `lastRequest < cutoff` cascade → conversations | `retention.ts` pure; `prune` CLI weekly |
 | Docker PG `healthy` | 10s start_period + 5s interval 10 retries | `docker-compose.yml` healthcheck |
 
@@ -983,7 +984,7 @@ type ConversationRow = { id: string; owner: string; title: string; messages: Cha
 | 2026-09-10 | Pass 6 | Fresh clone + sample-build diff + byte-verify `od -c` | Typecheck✓ lint 0 test 31/31 build 6 → `29/29` local + `12/12` live | C1 `.env` re-tracked, H1 long-answer 8M browser, H2 curated boundary (WorkspaceRequestError), M1 search bound to term, polish layer `workspace-polish.css` | `f888508..cb8a05e` |
 | 2026-09-11 | Pass 7 | Fresh clone + live re-verify + Lighthouse | Typecheck✓ lint 0 test 41/41 build 5/5 → `31/31` local, `11/12` live (dead NVIDIA key) + Lighthouse 97/100/100 | R1 deriveTitle dual cap `70cp/100u`, 409 guard, mutation curated toast, Lighthouse I5 closed | `c88a19b` |
 | 2026-09-11 | Pass 8 | Fresh clone + live + CSP hardening (TDD) | Typecheck✓ lint 0 test 41/41 build 5/5 → `32/32` local (new header test `workspace.spec.ts:349`), `11/12` live + agent-browser pass | **H1 hardened CSP baseline** `default-src 'self'` + 6 directives + `COOP/CORP same-origin` (e377429), L1 locator `.error-banner` | `9000aca` |
-| 2026-09-12 | Pass 9 | Live gap hunt + tiered audit + remediation (TDD) | Typecheck✓ lint 0 test 55/55 build 5/5 → `34/34` local (rate-limit + comment-frame tests), `10/12` live (redeployed headers verified; blocked beacon + provider stall) | **H1 CSP CF-analytics origins**, **H2 `: keep-alive` SSE comment frames** (`src/lib/keepalive.ts`), **M-1 `?q=` rate limit** (`src/lib/throttle.ts`), L-1 compose loopback, L-2 beat guard, I-B error no-store; operator A2 provider stall | pass-9 commits |
+| 2026-09-13 | Session 5 | Live re-verify (12/12) + backlog closure + pass-10 audit + remediation (TDD) | Typecheck✓ lint 0 test 62/62 build 5/5 → `38/38` local (B1 index + lease 429 + mint throttle + export tests), `12/12` live (provider round-trip verified; exploratory pass zero issues) | **B1 indexed `search_text` + `pg_trgm` GIN** (migration 0001), **I2 lease = uniform admission gate** (key check after lease), **M3 app-level session-mint throttle** (`src/lib/client-key.ts`, cf-connecting-ip/rightmost-XFF), export-download E2E; audit F-1/F-2 XFF hardening, M-1 flake fix, L-1..L-6 | session-5 commits |
 
 ### Appendix D: Post-Deploy Live-Site Validation
 
@@ -1002,11 +1003,11 @@ type ConversationRow = { id: string; owner: string; title: string; messages: Cha
 ```bash
 curl -s http://localhost:3004/api/health                     # {"ok":true}
 curl -s http://localhost:3004/api/conversations              # {conversations:[],configured:false} + kimi_session
-TEST_BASE_URL=http://localhost:3004 npx playwright test       # 12 skipped live, 32 passed (workspace 13 incl. header + stream-ui 12 + recovery 5 + network-recovery 1)
-LIVE_SITE_URL=https://kimi-chat.jesspete.shop npx playwright test tests/live-site.spec.ts  # 11/12 (dead NVIDIA key, A1) → 12/12 after key rotation
+TEST_BASE_URL=http://localhost:3004 npx playwright test       # 12 skipped live, 38 passed (workspace 18 incl. header + B1 + lease + mint throttle + stream-ui 14 incl. export + recovery 5 + network-recovery 1)
+LIVE_SITE_URL=https://kimi-chat.jesspete.shop npx playwright test tests/live-site.spec.ts  # verified 12/12 (2026-09-13)
 ```
 
-**Known open after pass 8:** Rotate SSH (`docs/ssh-key.txt` history) + NVIDIA (`nvapi-…` history) — keys read as dead (`403 Authorization failed` direct probe) but history retains; redeploy prod for hardened CSP headers (`default-src` + COOP/CORP, live effect pending) + weekly `prune` cron; nonce `script-src` remains deploy-time hardening.
+**Known open after session 5 (2026-09-13):** The live deployment is fully green (12/12 — redeployed CSP headers live, provider round-trip verified). Remaining operator items are hygiene debt, not outages: rotate the SSH key and the old `nvapi-` key that remain in git history; schedule the weekly `prune` cron; a nonce-based `script-src` remains the deploy-time hardening step.
 
 ---
 
@@ -1023,25 +1024,25 @@ LIVE_SITE_URL=https://kimi-chat.jesspete.shop npx playwright test tests/live-sit
 | Prod | Root | `npm start` / `PORT=3004 npm start -- --port 3004` |
 | Typecheck | Root | `npm run typecheck` → `next typegen && tsc --noEmit` |
 | Lint | Root | `npm run lint` → flat `next/core-web-vitals` |
-| Unit | Root | `npm test` → `node --experimental-strip-types --test tests/*.test.mjs` **55/55** (core 31 + origin 7 + stream-limit 3 + heartbeat 6 + throttle 8) |
-| E2E | Root | `TEST_BASE_URL=http://localhost:3004 npx playwright test` → **12 skipped live, 34 passed** (workspace 15 incl. CSP header + rate limit + stream-ui 13 incl. comment frames) |
+| Unit | Root | `npm test` → `node --experimental-strip-types --test tests/*.test.mjs` **62/62** (core 31 + origin 7 + stream-limit 3 + heartbeat 6 + throttle 8 + client-key 7) |
+| E2E | Root | `TEST_BASE_URL=http://localhost:3004 npx playwright test` → **12 skipped live, 38 passed** (workspace 18 incl. CSP header + rate limit + B1 + lease 429 + mint throttle; stream-ui 14 incl. comment frames + export download) |
 | Health | Browser | `curl -s http://localhost:3004/api/health` → `{"ok":true}` |
 | Prune | Root | `npm run prune -- --idle-days 30 [--conversation-days 90]` |
 | Tokens | `src/app/globals.css` | `:root {--canvas #fcfdfb, --mint #e8f0e2, --green #306345, --focus #60926f …}` |
-| Schema | `src/db/schema.ts` | `chat_sessions (id text PK) + conversations (uuid PK, owner FK cascade, jsonb messages, index owner_updated)` |
+| Schema | `src/db/schema.ts` | `chat_sessions (id text PK) + conversations (uuid PK, owner FK cascade, jsonb messages, generated search_text, index owner_updated + GIN search)` |
 | Origin gate | `src/lib/origin.ts` | `isSameOriginRequest(origin,host,forwardedHost,secFetchSite)` — pure |
 | SSE | `src/lib/sse.ts` | `SSEParser` — LF/CRLF/CR, split-CRLF, exactly-one-space, shared |
 | Validation | `src/lib/validation.ts` | `chatInputSchema 16k`, `imageSchema 2.8M`, `titleSchema 1-100` |
-| Session | `src/lib/server.ts` | `kimi_session` 64-hex → SHA-256, `assertOrigin`, `readJson 3MB`, `errorResponse` curated |
+| Session | `src/lib/server.ts` | `kimi_session` 64-hex → SHA-256, `assertOrigin`, `readJson 3MB`, `errorResponse` curated, mint throttle 60/10 s/network (key via `client-key.ts`) |
 | Workspace | `src/components/chat-workspace.tsx` | 1572 lines — the entire UI; search `⌘K` 250 ms → `?q=` |
 | Drawer | `src/components/navigation-frame.tsx` | 46 lines — Radix `Dialog asChild` |
 | CI | `.github/workflows/ci.yml` | `gates` secret scan → typecheck → lint → test → build → audit + `e2e` postgres:17 service |
-| PAD | Root | `Project_Architecture_Document.md` **v1.2** (`HEAD 9000aca`) — blueprint (this SKILL’s source) |
+| PAD | Root | `Project_Architecture_Document.md` **v1.4** (session-5 working tree) — blueprint (this SKILL’s source) |
 | Audits | `docs/CODE_REVIEW_REPORT.md` | Pass-3 ledger + late addendum |
 
 **How to use this SKILL:** Read §1→§3 to bootstrap; §4→§5 to extend UI without generic drift; §9→§10 to debug the 14 known bugs; §15 to copy-paste a route/lease/SSE/seeding pattern; §11 before every ship.
 
 ---
 
-*End of new-chat SKILL v1.2 — distilled `cb8a05e`→`9000aca` via six-phase process (ANALYZE→PLAN→VALIDATE→IMPLEMENT→VERIFY→DELIVER); mirrors PAD v1.2 (`HEAD 9000aca`) and passes 4–8 evidence (41/41, 32 local, header `workspace.spec.ts:349`). Keep it definitive — every line traces to a file at `9000aca`.*
+*End of new-chat SKILL v1.4 — distilled `cb8a05e`→session-5 working tree via six-phase process (ANALYZE→PLAN→VALIDATE→IMPLEMENT→VERIFY→DELIVER); mirrors PAD v1.4 and passes 4–10 evidence (62/62 unit, 38 local, header test in `workspace.spec.ts`). Keep it definitive — every line traces to a file at the session-5 commits.*
 

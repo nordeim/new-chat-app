@@ -1,12 +1,12 @@
-# Kimi Workspace — Master Project Architecture Document (PAD) v1.2
+# Kimi Workspace — Master Project Architecture Document (PAD) v1.4
 
 **Classification:** Internal Engineering Reference
 **Status:** DEFINITIVE, PRODUCTION-LOCKED BLUEPRINT
 **Companion Documents:** `README.md` (user-facing), `AGENTS.md` (agent ops), `CLAUDE.md` (AI instructions), `docs/CODE_REVIEW_REPORT.md` (audit ledger)
-**Last Updated:** 2026-09-11
+**Last Updated:** 2026-09-13
 **Audience:** Senior Engineers, Tech Leads, DevOps, Onboarding Engineers, AI Coding Agents
 **Rule:** Every architectural decision traces to a specific rationale. Nothing is here "because it's popular."
-**Repository:** `nordeim/new-chat-app` · **Branch:** `main` · **HEAD verified:** `9000aca`
+**Repository:** `nordeim/new-chat-app` · **Branch:** `main` · **HEAD verified:** session-5 working tree (2026-09-13)
 
 #### Revision Block — v1.0 (Tracked Changes)
 
@@ -16,6 +16,7 @@ Every change tagged with source: `[RES]` = web research, `[SR]` = self-review, `
 - `[VAL, SR]` v1.1 (2026-09-11) — Improvement + audit pass 7: `src/lib/title.ts` (dual-cap whitespace/surrogate-safe title derivation) added and wired into the chat route; mutation-toast curated-copy boundary completed; 409 delete-while-generating regression test added; unit suite 41, local E2E 31 (verified); live suite 11/12 — the deployed `NVIDIA_API_KEY` is rejected by NVIDIA (operator rotation pending, see `docs/CODE_REVIEW_REPORT.md` pass 7 + `remediation-plan-2026-09-11.md`); Lighthouse re-baselined against the live deployment (97 perf / 100 a11y / 100 best-practices, closing I5).
 - `[VAL, SR]` v1.2 (2026-09-11) — Validation + hardening pass 8: hardened CSP baseline (`default-src 'self'` + explicit `script/style/img/font/connect/form-action` directives + `COOP/CORP same-origin`, TDD header test `tests/workspace.spec.ts:349`) + locator alignment (`.error-banner` per `AGENTS.md`) + doc drift closure (`maxDuration 600` graduated lease/timeout `195s/615s` + `175s/590s`, response `1.2M` / history `16MB`, `41/41` unit / `32` local E2E, retention positional signature, `workspace-polish.css` import order). `HEAD 9000aca` verified: `typecheck→lint→41/41→build 5/5→header probe prod no unsafe-eval`. (This report: `Project_Architecture_Document.md` vs `9000aca` alignment.)
 - `[VAL, SR]` v1.3 (2026-09-12) — Live-gap + audit pass 9: live E2E showed the operator redeployed (hardened CSP live) and surfaced two verified gaps, both closed via TDD — CSP now allows the Cloudflare Web Analytics beacon origins (`script-src … https://static.cloudflareinsights.com`, `connect-src … https://cloudflareinsights.com`; blocked beacon = console error on every page load) and the chat stream emits `: keep-alive` comment frames every 15 s while the provider is silent (`src/lib/keepalive.ts`; proxy idle timeouts cut the wire before the route's own provider timeout could deliver its curated error). Tiered audit (two independent sub-agents + mechanical scans) found and fixed: search `?q=` rate-limited 10/10 s per session (`src/lib/throttle.ts`, M-1 resource amplification), error responses `Cache-Control: no-store` (I-B), docker-compose loopback binding (L-1), keep-alive beat try/catch (L-2), timing-test hardening (S4), PAD/SKILL/README doc syncs (D1/D2/D3). Counts: unit **55** (core 31 + origin 7 + stream-limit 3 + heartbeat 6 + throttle 8), local E2E **34** (workspace 15 + stream-ui 13 + recovery 5 + network-recovery 1). Live 10/12 — remaining: blocked beacon + provider stall (operator: A2 — verify/rotate NVIDIA key, check NIM status, verify egress). `HEAD` verified: `typecheck→lint→55/55→build→34/34 local E2E`.
+- `[VAL, SR]` v1.4 (2026-09-13) — Session 5: live deployment re-verified **12/12** (operator redeployed with a valid key — pass-9 A2 resolved; provider round-trip streams, persists, and self-cleans; exploratory pass over rename/export/search/image/delete zero issues, zero console errors). Pass-9 backlog closed in code, all TDD: **B1** indexed search (`conversations.search_text` STORED generated column + `messages_content_text` IMMUTABLE helper + `conversations_search_idx` GIN `gin_trgm_ops`, migration `drizzle/0001_lush_arachne.sql` self-contained for CI; `?q=` now one indexed ILIKE, term whitespace collapsed); **I2** lease = uniform admission gate (provider-key check moved after the lease claim so both 429 branches + recovery are tested without a key); **M3 app-level** session-mint throttle (60 new sessions / 10 s / network via `src/lib/client-key.ts`: `cf-connecting-ip` → rightmost `x-forwarded-for` → `"direct"`, IP-shape validated — pass-10 F-1/F-2 hardening against spoofed first values and oversized key strings); export-download E2E. Pass-10 tiered audit: 0 Critical/High code findings; the two Low (XFF spoofability, key-memory bound) were remediated as above. Counts: unit **62** (+ client-key 7), local E2E **38** (workspace 18 + stream-ui 14 + recovery 5 + network-recovery 1). `HEAD` verified: `typecheck→lint→62/62→build→38/38 local E2E→12/12 live`.
 
 ---
 
@@ -99,7 +100,7 @@ No speculative “e.g.” — every entry is locked and verified against `packag
 **ADR-002: Drizzle ORM + `pg` over Prisma**
 
 - **Context:** Need JSONB `messages` with server-side search (`jsonb_array_elements → ILIKE`), FK cascade deletes, and explicit control over Pool lifecycle for E2E `FOR UPDATE` transactions.
-- **Decision:** `drizzle-orm 0.45.2`, `drizzle-kit 0.31.10`, `pg 8.23.0`, `pg.Pool` cached on `globalThis` in dev (`src/db/index.ts`), `drizzle.config.ts` reads `DATABASE_URL` via `dotenv/config` (single source, no hard-coded URL), journal `drizzle/meta/_journal.json` + SQL `drizzle/0000_flimsy_sage.sql`.
+- **Decision:** `drizzle-orm 0.45.2`, `drizzle-kit 0.31.10`, `pg 8.23.0`, `pg.Pool` cached on `globalThis` in dev (`src/db/index.ts`), `drizzle.config.ts` reads `DATABASE_URL` via `dotenv/config` (single source, no hard-coded URL), journal `drizzle/meta/_journal.json` + SQL `drizzle/0000_flimsy_sage.sql` + `drizzle/0001_lush_arachne.sql` (search_text generated column + trigram GIN).
 - **Rationale:** Drizzle keeps SQL explicit (`sql` template for `ilike` + `jsonb_array_elements` with wildcard escaping `\ % _`), migrations are plain SQL reviewable in PRs, Pool is controllable for `transaction(async tx => FOR UPDATE)` in delete. Verified: `npm run db:migrate` → `[✓] migrations applied`, `npm run db:seed` → `{inserted:1}` then `{inserted:0}` idempotent.
 - **Consequences:** + No codegen, + SQL is the migration artifact; − Manual `searchPattern` escaping required.
 - **Alternatives Rejected:** Prisma (strong DX, but `jsonb` search + raw `FOR UPDATE` ergonomics weaker; extra codegen step).
@@ -237,6 +238,7 @@ new-chat-app/
 ├── drizzle.config.ts             # dotenv/config, DATABASE_URL required, schema ./src/db/schema.ts, out ./drizzle, verbose+strict
 ├── drizzle/                      # Versioned SQL — journaled migrations (generate → migrate)
 │   ├── 0000_flimsy_sage.sql      # CREATE chat_sessions, conversations, FK cascade, index owner_updated
+│   ├── 0001_lush_arachne.sql     # pg_trgm + messages_content_text IMMUTABLE helper + search_text generated column + GIN gin_trgm_ops index
 │   └── meta/                     # _journal.json + 0000_snapshot.json
 ├── eslint.config.mjs             # Flat config, next/core-web-vitals, globalIgnores .next/out/build/next-env.d.ts/skills/sample-build/docs
 ├── infrastructure/postgres/init/00-create-extensions.sql ← pgcrypto + pg_trgm (IF NOT EXISTS, runs once on first docker entrypoint)
@@ -470,7 +472,7 @@ erDiagram
   }
 ```
 
-**SQL source of truth:** `drizzle/0000_flimsy_sage.sql` (journal `drizzle/meta/_journal.json` + snapshot `0000_snapshot.json`). Single migration to date; `drizzle.config.ts` is `defineConfig({ dialect:"postgresql", schema:"./src/db/schema.ts", out:"./drizzle", dbCredentials:{url: DATABASE_URL}, verbose:true, strict:true })`. `drizzle-kit generate` → `drizzle/*.sql`; `drizzle-kit migrate` applies journal in order; `npx drizzle-kit push` is prototyping only (not production-safe).
+**SQL source of truth:** `drizzle/0000_flimsy_sage.sql` + `drizzle/0001_lush_arachne.sql` (journal `drizzle/meta/_journal.json` + snapshots). Migration 0001 is self-contained (ensures `pg_trgm`, defines the helper with `CREATE OR REPLACE`, backfills the generated column, builds the index) and the same helper lives in `infrastructure/postgres/init/00-create-extensions.sql` so `npx drizzle-kit push` works on a cold volume; `drizzle.config.ts` is `defineConfig({ dialect:"postgresql", schema:"./src/db/schema.ts", out:"./drizzle", dbCredentials:{url: DATABASE_URL}, verbose:true, strict:true })`. `drizzle-kit generate` → `drizzle/*.sql`; `drizzle-kit migrate` applies journal in order; `npx drizzle-kit push` is prototyping only (not production-safe).
 
 ### 4.2 Data Models
 
@@ -627,11 +629,11 @@ Additional accents: `.peach #faede4/#bd8d71`, `.lavender #f0edf9/#9b8cb2`, `.yel
 | Category | Files | Tests | Framework | Location |
 |----------|-------|-------|-----------|----------|
 | **Unit** | 5 | 55 | `node:test` + `--experimental-strip-types` | `tests/core.test.mjs` (31, incl. 10 deriveTitle), `tests/origin.test.mjs` (7), `tests/stream-limit.test.mjs` (3), `tests/heartbeat.test.mjs` (6), `tests/throttle.test.mjs` (8) |
-| **E2E — Workspace (DB-backed)** | 1 | 15 | Playwright `request` + Drizzle fixtures | `tests/workspace.spec.ts` (incl. 409 delete-while-generating guard, ?q= rate limit) |
-| **E2E — Stream UI (hermetic)** | 1 | 13 | Playwright (mocks both APIs) | `tests/stream-ui.spec.ts` (incl. keep-alive comment frames) |
+| **E2E — Workspace (DB-backed)** | 1 | 18 | Playwright `request` + Drizzle fixtures | `tests/workspace.spec.ts` (incl. 409 delete-while-generating guard, ?q= rate limit, B1 index contract, lease-conflict 429s, session-mint throttle) |
+| **E2E — Stream UI (hermetic)** | 1 | 14 | Playwright (mocks both APIs) | `tests/stream-ui.spec.ts` (incl. keep-alive comment frames + export download) |
 | **E2E — Recovery/Network (hermetic)** | 2 | 6 | Playwright (route fixtures) | `tests/recovery.spec.ts` (5), `tests/network-recovery.spec.ts` (1) |
 | **E2E — Live Site (gated)** | 1 | 12 | Playwright + `LIVE_SITE_URL` + `axe` | `tests/live-site.spec.ts` (skipped unless `LIVE_SITE_URL` set) |
-| **Total local** | 9 | **34 passed** + 12 skipped live | — | verified 2026-09-12 (pass 9: `34/34` incl. CSP header + rate-limit + keep-alive comment-frame tests) |
+| **Total local** | 9 | **38 passed** + 12 skipped live | — | verified 2026-09-13 (session 5: `38/38` incl. CSP header + rate-limit + keep-alive comment-frame + B1 index + lease 429 + mint throttle + export download tests) |
 
 ### 7.2 Test Patterns
 
@@ -670,7 +672,7 @@ Run **in order** (per `AGENTS.md` Verification order; typecheck runs `next typeg
 ```bash
 npm run typecheck   # next typegen && tsc --noEmit (strict, zero any/@ts-ignore)
 npm run lint        # eslint flat + next/core-web-vitals (skills/sample-build/docs excluded)
-npm test            # node --experimental-strip-types --test tests/*.test.mjs → 55/55
+npm test            # node --experimental-strip-types --test tests/*.test.mjs → 62/62
 npm run build       # next build Turbopack → 6 routes, ~0.6–3s (5/5 pages incl. ○ /icon.svg)
 # E2E (needs prod preview + disposable DB + no NVIDIA_API_KEY):
 npm run db:migrate
@@ -785,7 +787,7 @@ cd new-chat-app
 npm ci                              # use ci, not install
 cp .env.example .env                # edit: DATABASE_URL=postgresql://chat_user:chat_secret@127.0.0.1:5433/chat_db
 sudo docker compose up -d           # postgres 17 on 5433 (healthy in ~10s)
-npm run db:migrate                  # apply drizzle/0000_flimsy_sage.sql
+npm run db:migrate                  # apply drizzle/0000_flimsy_sage.sql + 0001_lush_arachne.sql
 npm run db:seed                     # optional, idempotent demo row
 npm run dev                         # http://localhost:3000 — mint workspace with prompt starters
 curl http://localhost:3000/api/health  # {"ok":true}
@@ -803,7 +805,7 @@ curl http://localhost:3000/api/health  # {"ok":true}
 | Serve prod | `npm start` | `next start`, needs `DATABASE_URL` |
 | Lint | `npm run lint` | `eslint .` flat, skips skills/sample-build/docs |
 | Typecheck | `npm run typecheck` | `next typegen && tsc --noEmit` — never skip `typegen` |
-| Unit tests | `npm test` | `node --experimental-strip-types --test tests/*.test.mjs` → 55/55 (core 31 incl. 10 deriveTitle + origin 7 + stream-limit 3 + heartbeat 6 + throttle 8) |
+| Unit tests | `npm test` | `node --experimental-strip-types --test tests/*.test.mjs` → 62/62 (core 31 incl. 10 deriveTitle + origin 7 + stream-limit 3 + heartbeat 6 + throttle 8 + client-key 7) |
 | Single unit file | `node --experimental-strip-types --test tests/core.test.mjs` | — |
 | E2E (prod preview) | `npm run test:e2e` | Needs `npm run build && npm start` + disposable `DATABASE_URL` + no `NVIDIA_API_KEY` |
 | Single E2E suite | `npx playwright test tests/workspace.spec.ts -g "x-forwarded-host"` | Filter by title |
@@ -840,17 +842,17 @@ curl http://localhost:3000/api/health  # {"ok":true}
 
 | Priority | Issue | Impact | Status |
 |----------|-------|--------|--------|
-| 🔴 **CRITICAL** | **A2 (pass 9, 2026-09-12): live provider path stalls >200 s after `meta`** — `configured: true`, no 401/403 banner anymore; the provider fetch hangs with zero events until Cloudflare's ~100 s idle cut surfaces raw network-interrupted copy. Not distinguishable from outside whether the cause is the credential, NVIDIA NIM service state for `moonshotai/kimi-k3`, or server egress | Chat broken live in a new signature; the route's keep-alive frames (pass 9) now keep the wire alive so the curated timeout error can reach the browser, but the round-trip itself needs operator action | **OPEN — operator**: verify/rotate `NVIDIA_API_KEY`, check NVIDIA NIM status, verify server egress; then re-run the live suite (supersedes the pass-7/8 dead-key signature — see `docs/CODE_REVIEW_REPORT.md` pass 9 A2) |
+| 🔴 **CRITICAL** | ~~**A2 (pass 9, 2026-09-12): live provider path stalls >200 s after `meta`**~~ **RESOLVED 2026-09-13** — the operator redeployed with a valid key; the full live suite is 12/12 including a verified provider round-trip (streamed, persisted, reasoning stripped, self-cleaning) | Was: chat broken live in a new signature | **CLOSED (operator redeploy)** — verified by session-5 live E2E + exploratory pass (see `docs/CODE_REVIEW_REPORT.md` pass 10) |
 | 🔴 **CRITICAL** | **SSH private key in git history** (`docs/ssh-key.txt` removed from tracking but still in history — see `CODE_REVIEW_REPORT.md` C1) | Repo read = push access until rotation | **OPEN — operator rotation pending** (credential reused for push automation) |
 | 🔴 **CRITICAL** | **NVIDIA key in git history** (`.env` added `7afe083`, tracked until `272d7ff`; embedded key in `docs/prompt-to-create.md` redacted `dc1c664`; current key `nvapi-vn-hb…` tracked until late remediation; NVIDIA 403 “Authorization failed” proves dead but history retains it) | Exposure cannot be undone without `git filter-repo`; rotation is the correct closure | **OPEN — rotation advised (key reads as dead)**, untracked at `272d7ff`, addendum `6be7596` |
-| 🟠 **HIGH** | ~~Prod must be redeployed~~ **RESOLVED + RE-DEPLOYED** — the pass-8 headers went live (verified by pass-9 header probe), and pass 9's fixes (CSP analytics origins, keep-alive frames, search rate limit, error no-store) await the **next** redeploy | Was: chat broken until redeploy | **Resolved by redeploy**; pass-9 fixes effective live on the next one |
-| 🟠 **HIGH** | ~~Unthrottled `?q=` search amplification (pass-9 M-1)~~ **RESOLVED** — `?q=` rate-limited 10/10 s per session (`src/lib/throttle.ts`, TDD); plain listing unlimited; curated 429 degrades to the tested local-fallback path | Was: scripted sessions could hold ~1 core of shared DB CPU after a seeding campaign | **Closed app-level** (pass 9); complete closure = B1 backlog (indexed `search_text` + `pg_trgm` GIN) |
+| 🟠 **HIGH** | ~~Prod must be redeployed~~ **RESOLVED + LIVE (verified 2026-09-13)** — the pass-8 headers went live (pass-9 probe), and the operator has since redeployed with a valid provider key: all pass-9 fixes (CSP analytics origins, keep-alive frames, search rate limit, error no-store) are live, verified 12/12 | Was: chat broken until redeploy | **Resolved by redeploy** — session-5 live E2E proves all fixes effective |
+| 🟠 **HIGH** | ~~Unthrottled `?q=` search amplification (pass-9 M-1)~~ **RESOLVED + INDEXED (session 5)** — `?q=` rate-limited 10/10 s per session (pass 9) AND now served by the `search_text` generated column + trigram GIN (B1, migration 0001): one indexed ILIKE replaces the JSONB expansion entirely; term whitespace collapsed | Was: scripted sessions could hold ~1 core of shared DB CPU after a seeding campaign | **Closed app-level** (pass 9 limit + session-5 B1 index = complete M-1 closure) |
 | 🟢 **LOW (debt)** | **CI secret scan over-scans reference material** — `git grep … -- . ':!package-lock.json'` hits `skills/`, `sample-build/`, `docs/` example keys (false positives) | Would fail CI if those files are tracked and contain `nvapi-` examples | Advisory: scope to `src tests scripts drizzle` or add `':!skills/**' ':!sample-build/**' ':!docs/**'` |
 | ⚪ **Info** | **100-conversation cap race** — concurrent `count → insert` can transiently exceed by 1 (bounded, self-corrects via retention; advisory-lock fix adds complexity without real risk) | Self-inflicted, bounded | **Accepted** (report I1) |
-| ⚪ **Info** | **429 lease-conflict has no automated test** (reaching lease requires valid provider key) | SQL condition `UPDATE … WHERE busyUntil < now` is concurrency-safe but untested via API | **Backlog** — extract lease seam for injectable coverage if wanted (I2) |
+| ⚪ **Info** | ~~**429 lease-conflict has no automated test**~~ **CLOSED (session 5, I2)** — the provider-key check moved after the lease claim (uniform admission gate), so DB fixtures reach both 429 branches + recovery without a provider key | Was: SQL condition safe but untested via API | **Closed** (`workspace.spec.ts` "chat lease conflicts surface 429 with curated copy, then recover") |
 | ✅ **Closed (app-level, pass 8)** | **CSP hardened baseline** — `default-src 'self'; script-src 'self' 'unsafe-inline' (+dev unsafe-eval); style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'self'; object-src 'none'` + `COOP/CORP same-origin` landed at `e377429` via TDD (header test `workspace.spec.ts:349` pins it; `32/32` green under new policy). Nonce-based `script-src` (forces dynamic rendering) remains deploy-time hardening; headers reach live on next redeploy. | **Closed app-level** — live effect after redeploy (pass 8; was I3 carried) |
 | ✅ **Closed (app-level, pass 9)** | **CSP Cloudflare Analytics allowance + SSE keep-alive + search rate limit** — `script-src … https://static.cloudflareinsights.com` + `connect-src … https://cloudflareinsights.com` (the deployed zone injects the beacon; blocking it = console error on every page load, verified live); `: keep-alive` comment frames every 15 s while the provider is silent (`src/lib/keepalive.ts`); `?q=` bounded 10/10 s (`src/lib/throttle.ts`) | Live failures reproduced by pass-9 live E2E; all closed TDD red → green (header test + 6 heartbeat + 8 throttle unit + 1 rate-limit + 1 comment-frame E2E) | **Closed app-level** — live after the next redeploy (see `docs/CODE_REVIEW_REPORT.md` pass 9 H1/H2/M-1) |
-| ⚪ **Info** | **B1 (backlog): indexed server-side search** — generated `search_text` column + `pg_trgm` GIN index (extension already installed) would remove the per-query JSONB-expansion cost instead of bounding it (the complete M-1 closure) | Schema migration decision | **Backlog** (pass 9) |
+| ✅ **Closed (app-level, session 5)** | **B1 indexed server-side search + M3 session-mint throttle + export coverage** — `conversations.search_text` STORED generated column (`messages_content_text` IMMUTABLE helper, images excluded) + `conversations_search_idx` GIN `gin_trgm_ops` (migration 0001, self-contained for CI; helper duplicated in the init script so `drizzle-kit push` works cold); session minting bounded 60/10 s per network (`src/lib/client-key.ts`: cf-connecting-ip → rightmost XFF → "direct", IP-shape validated — closes pass-10 F-1/F-2); markdown export E2E | Pass-10 audit backlog B1/I2/M3/export | **Closed app-level** (TDD red→green; see `docs/CODE_REVIEW_REPORT.md` pass 10) |
 | ⚪ **Info** | **`workspace-polish.css` adoption revisited (pass 6)** | The pass-1/4 objection targeted the old layer; the current sample-build layer is additive on an identical `globals.css`, fixes the welcome-contrast dip, and was verified class-by-class against this app's markup | **Adopted in pass 6** (see `docs/CODE_REVIEW_REPORT.md`) |
 | ⚪ **Info** | **Lighthouse re-baselined (pass 7, 2026-09-11)** | Live deployment: **97 performance · 100 accessibility · 100 best-practices** (SEO 63 by-design `noindex`); FCP 1.6 s, LCP 2.3 s, TBT 120 ms, CLS 0 | **Closed** (I5) |
 | ⚪ **Info** | **`npm prune` unscheduled** | Cookie expiry alone does not delete DB data | **Operator — schedule weekly cron** (` --idle-days 30 [--conversation-days 90]`) (I6) |
@@ -864,7 +866,7 @@ curl http://localhost:3000/api/health  # {"ok":true}
 | File | Lines | Purpose |
 |------|-------|---------|
 | `src/app/api/chat/route.ts` | ~400 | Core — origin→session→zod→magic-byte→lease (`195s`/`615s` graduated)→upsert (duplicate-retry guard)→NVIDIA SSE (`175s`/`590s` timeout)→persist final only→SSE (meta/thinking/delta/done/error; 15 s `: keep-alive` comment frames while the provider is silent); `maxDuration 600` |
-| `src/app/api/conversations/route.ts` | ~85 | List/search `GET` — owner-filtered, `?q=` ILIKE title+JSONB content, escaped, `configured` flag, sets cookie; `?q=` rate-limited 10/10 s per session (`src/lib/throttle.ts`; plain listing unlimited) |
+| `src/app/api/conversations/route.ts` | ~85 | List/search `GET` — owner-filtered, `?q=` ILIKE over the generated `search_text` column (trigram GIN, escaped, whitespace-collapsed), `configured` flag, sets cookie; `?q=` rate-limited 10/10 s per session + session minting throttled 60/10 s per network in `ensureSession` (`src/lib/throttle.ts` + `src/lib/client-key.ts`; plain listing and valid-cookie requests unlimited) |
 | `src/app/api/conversations/[id]/route.ts` | ~130 | Read (strip `reasoning`)/rename (1–100)/delete (`FOR UPDATE` + 409 if busy) — all owner-scoped |
 | `src/app/api/health/route.ts` | ~15 | `db.execute(select 1)` → `{ok:true}` / 500 — no provider check |
 | `src/components/chat-workspace.tsx` | ~1500 | Entire client UI — zod `summary/message/streamEvent` schemas, `apiJson`/`parseOrReload`, debounced `?q=` 250 ms, lease retry, Radix via `NavigationFrame`, markdown sanitized, attachment 2 MB, `reasoning` stripped |
@@ -883,6 +885,7 @@ curl http://localhost:3000/api/health  # {"ok":true}
 | `src/db/index.ts` | ~25 | `pg.Pool` (globalThis cache) + `drizzle(pool)` — throws if `DATABASE_URL` missing |
 | `src/db/seed.ts` | ~50 | Idempotent seed — injected `{db,tables}` |
 | `drizzle/0000_flimsy_sage.sql` | ~15 | CREATE `chat_sessions`, `conversations`, FK cascade, `owner_updated` index |
+| `drizzle/0001_lush_arachne.sql` | ~16 | `pg_trgm` extension + `messages_content_text` IMMUTABLE helper + `search_text` STORED generated column + `conversations_search_idx` GIN `gin_trgm_ops` |
 | `drizzle.config.ts` | ~15 | `defineConfig({ dialect:"postgresql", schema:"./src/db/schema.ts", out:"./drizzle" })` reads `DATABASE_URL` via `dotenv/config` |
 | `next.config.ts` | ~40 | Headers: nosniff, DENY, HSTS `63072000; includeSubDomains`, referrer, permissions-policy, **hardened CSP** `default-src 'self'; script-src 'self' 'unsafe-inline' (+dev unsafe-eval); style-src/img-src data:/font-src/connect-src/form-action` + `COOP/CORP same-origin` (header test `workspace.spec.ts:349` pins it) |
 | `tsconfig.json` | ~40 | `ES2017`, `bundler`, `strict`, `noEmit`, `@/* → src/*`, excludes `skills/sample-build/docs` |
@@ -899,9 +902,9 @@ curl http://localhost:3000/api/health  # {"ok":true}
 | `tests/throttle.test.mjs` | ~105 | Unit — `createRateLimiter` burst / window slide / partial expiry / key isolation / entry-cap pruning / RangeError (injectable clock) (pass 9) |
 | `tests/recovery.spec.ts` | ~150 | E2E — 5 hermetic: failed search bound to term + retry, failed navigation clears send destination, network-on-open curated copy, mutation (rename) curated toast |
 | `tests/network-recovery.spec.ts` | ~30 | E2E — 1 hermetic: network failure actionable guidance + draft preservation |
-| `tests/stream-ui.spec.ts` | ~440 | E2E — 13 hermetic: mocked transport, streamed answer + GFM tables, error/WCAG, non-JSON friendly copy, malformed stream curated copy, stop-button race (setTimeout 0), lightbox, code-copy, skip link, char count, DB-outage copy, **interleaved `: keep-alive` comment frames** |
+| `tests/stream-ui.spec.ts` | ~490 | E2E — 14 hermetic: mocked transport, streamed answer + GFM tables, error/WCAG, non-JSON friendly copy, malformed stream curated copy, stop-button race (setTimeout 0), lightbox, code-copy, skip link, char count, DB-outage copy, **interleaved `: keep-alive` comment frames**, **export download (filename + transcript)** |
 | `AGENTS.md` | ~80 | Agent ops — architecture map (incl. retention positional sig + `2.8M` pre-cap + hardened CSP prose), non-obvious rules (WorkspaceRequestError, setTimeout 0, .error-banner) |
-| `README.md` | ~280 | User-facing — features + architecture (PG 17) + quick-start + docker + API + security (hardened CSP + COOP/CORP + CF-analytics origins) + testing (55/55, 34 local) + tokens + troubleshooting |
+| `README.md` | ~290 | User-facing — features + architecture (PG 17) + quick-start + docker + API + security (hardened CSP + COOP/CORP + CF-analytics origins) + testing (62/62, 38 local) + tokens + troubleshooting |
 | `docs/CODE_REVIEW_REPORT.md` | ~630 | Audit ledger passes 3–9: pass 3 (C2/H1/M1/L1-L2/I1-6) + pass 4 (H1/H2 stop-button race, M1 curated stream copy, M2 memo) + pass 5 (abort taxonomy ResponseAborted) + pass 6 (C1 re-tracked .env, H1 long-answer 8M, H2 curated boundary, M1/M2) + pass 7 (R1 deriveTitle cap, 409 guard, curated mutation toast) + pass 8 (H1 hardened CSP/COOP/CORP, L1 locator alignment) + pass 9 (H1 CSP beacon allowance, H2 keep-alive, M-1 search rate limit, L-1/L-2 hardening, A2 live provider stall) — severity tables + verification ledgers + backlog |
 | `Project_Architecture_Document.md` | — | **This PAD** — single source of truth |
 
@@ -919,10 +922,10 @@ curl http://localhost:3000/api/health  # {"ok":true}
 | **Reasoning** | Provider `reasoning_content` (thinking) — persisted for multi-turn context, stripped from every browser payload (`GET [id]` map + `done` `content` only). |
 | **Incremental parser** | `SSEParser.push(chunk)` that handles LF/CRLF/CR, split-CRLF across chunks, exactly-one-space `data:`, and size limits independent of chunk size. |
 | **Prune** | Retention CLI `npm run prune -- --idle-days 30 [--conversation-days 90]` — pure `pruneIdleSessions` (cascade) + `pruneStaleConversations`. |
-| **Gates** | Pre-commit quality order: `typecheck (next typegen + tsc) → lint → test (55/55) → build (6 routes, 5/5 pages)` → (if DB/UI touched) `test:e2e` (`34` local + `12` live gated). Never weaken gates; header test `workspace.spec.ts:349` pins hardened CSP (incl. CF-analytics origins). |
+| **Gates** | Pre-commit quality order: `typecheck (next typegen + tsc) → lint → test (62/62) → build (6 routes, 5/5 pages)` → (if DB/UI touched) `test:e2e` (`38` local + `12` live gated). Never weaken gates; the header test in `workspace.spec.ts` pins hardened CSP (incl. CF-analytics origins). |
 | **Sample-build** | Reference build uploaded into `sample-build/` — source of incremental SSE parser + NavigationFrame pattern; excluded from type/lint gates. |
 
 ---
 
-**End of PAD v1.3 — validated 2026-09-12 at the pass-9 commits (typecheck→lint→55/55 unit→build 5/5 pages `○ /icon.svg`→header probe `default-src 'self'; script-src 'self' 'unsafe-inline' https://static.cloudflareinsights.com; …; connect-src 'self' https://cloudflareinsights.com; COOP/CORP same-origin`; full local 34/34 incl. CSP header + rate-limit + keep-alive comment-frame tests).**
+**End of PAD v1.4 — validated 2026-09-13 at the session-5 working tree (typecheck→lint→62/62 unit→build 5/5 pages `○ /icon.svg`→header probe `default-src 'self'; script-src 'self' 'unsafe-inline' https://static.cloudflareinsights.com; …; connect-src 'self' https://cloudflareinsights.com; COOP/CORP same-origin`; full local 38/38 incl. CSP header + rate-limit + keep-alive + B1 index + lease 429 + mint throttle + export download tests; live 12/12).**
 
